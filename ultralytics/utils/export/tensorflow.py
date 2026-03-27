@@ -109,6 +109,8 @@ def onnx2saved_model(
         onnx.helper.float32_to_bfloat16 = float32_to_bfloat16
 
     import onnx2tf  # scoped for after ONNX export for reduced conflict during import
+    import onnx2tf.ops.TopK as _t
+    _t.make_node.__globals__['int'] = lambda x: int(x.squeeze()) if isinstance(x, np.ndarray) else int(x)  # fix TopK error
 
     LOGGER.info(f"{prefix} starting TFLite export with onnx2tf {onnx2tf.__version__}...")
     keras_model = onnx2tf.convert(
