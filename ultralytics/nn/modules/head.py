@@ -1916,7 +1916,6 @@ class SemanticSegmentfpn(nn.Module):
             nn.ConvTranspose2d(c_mid, c_mid, kernel_size=2, stride=2, bias=False),
             nn.BatchNorm2d(c_mid),
             nn.SiLU(inplace=True),
-            Conv(c_mid, c_mid, 3),
         )
 
         # Final classifier
@@ -1943,7 +1942,6 @@ class SemanticSegmentfpn(nn.Module):
         """
         # Fuse all scales to P3 resolution via lateral convs + bilinear upsample + sum
         feat = x[0]
-        feat = self.up_conv(feat)
 
         # Classify
         logits = self.classifier(feat)  # [B, nc, H/4, W/4]
