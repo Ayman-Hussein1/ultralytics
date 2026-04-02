@@ -12,8 +12,8 @@ match_thresh: 0.8 # (float) Association similarity threshold (IoU/cost); tune wi
 fuse_score: True # (bool) Fuse detection score with motion/IoU for matching; stabilizes weak detections
 
 # OC-SORT specifics (inherited)
-delta_t: 5 # (int) Temporal window for velocity direction computation in OCM; increased for smoother velocity
-inertia: 0.4 # (float) Weight of velocity consistency cost in association; increased for stronger motion prior
+delta_t: 3 # (int) Temporal window for velocity direction computation in OCM
+inertia: 0.2 # (float) Weight of velocity consistency cost in association
 use_byte: True # (bool) Enable ByteTrack-style low-confidence second association pass
 
 # Deep OC-SORT specifics
