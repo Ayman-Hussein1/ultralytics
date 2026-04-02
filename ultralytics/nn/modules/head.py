@@ -830,8 +830,10 @@ class ReID(nn.Module):
 
     Attributes:
         conv (Conv): Convolutional layer for feature transformation.
-        pool (nn.AdaptiveAvgPool2d): Global average pooling layer.
+        pool_avg (nn.AdaptiveAvgPool2d): Global average pooling layer.
+        pool_max (nn.AdaptiveMaxPool2d): Global max pooling layer.
         drop (nn.Dropout): Dropout layer for regularization.
+        embed (nn.Linear): Linear layer for embedding projection.
         bottleneck (nn.BatchNorm1d): BNNeck normalization layer.
         classifier (nn.Linear): Linear layer for identity classification.
         embed_dim (int): Dimension of the output embedding.
