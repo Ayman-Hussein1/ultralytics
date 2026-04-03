@@ -184,12 +184,13 @@ class DeepOCSORT(OCSORT):
         vel_dists = self._velocity_direction_cost(tracks, detections)
         dists = dists + self.inertia * vel_dists
 
-        # Appearance: min fusion with strict gating
+        # Appearance: weighted average fusion with gating
         if self.with_reid and self.encoder is not None:
             emb_dists = matching.embedding_distance(tracks, detections) / 2.0
             emb_dists[emb_dists > (1 - self.appearance_thresh)] = 1.0
             emb_dists[dists_mask] = 1.0
-            dists = np.minimum(dists, emb_dists)
+            # Weighted average instead of min: gives appearance more consistent influence
+            dists = 0.6 * dists + 0.4 * emb_dists
 
         return dists
 
