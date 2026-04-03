@@ -205,65 +205,38 @@ class OCSORT(BYTETracker):
 
     @staticmethod
     def _biou_distance(tracks, detections, buffer_ratio=0.5):
-        """Compute Soft Buffered IoU distance with confidence-adaptive expansion (BoostTrack++).
+        """Compute Buffered IoU distance: expand boxes before IoU to handle fast motion.
 
-        Track boxes are expanded by (1-conf)/2 fraction, detection boxes by (1-conf)/4 fraction,
-        where conf is the track's confidence. Lower-confidence tracks get larger buffers.
-        Falls back to fixed buffer_ratio for raw arrays without score attributes.
+        Each box is expanded by buffer_ratio * sqrt(w*h) in all directions (C-BIoU, BoostTrack).
 
         Args:
             tracks: List of tracks or np.ndarray boxes.
             detections: List of detections or np.ndarray boxes.
-            buffer_ratio (float): Fallback expansion ratio for raw arrays.
+            buffer_ratio (float): Expansion ratio relative to sqrt(area).
 
         Returns:
             (np.ndarray): Cost matrix (1 - BIoU).
         """
-        def _expand_xyxy(xyxy, fraction):
-            """Expand an xyxy box by fraction of its dimensions in all directions."""
-            w = xyxy[2] - xyxy[0]
-            h = xyxy[3] - xyxy[1]
-            bw = fraction * w / 2
-            bh = fraction * h / 2
-            return np.array([xyxy[0] - bw, xyxy[1] - bh, xyxy[2] + bw, xyxy[3] + bh])
-
-        def _expand_fixed(xyxy, ratio):
+        def _expand_xyxy(xyxy, ratio):
+            """Expand an xyxy box by ratio * sqrt(w*h) in all directions."""
             w = xyxy[2] - xyxy[0]
             h = xyxy[3] - xyxy[1]
             buf = ratio * np.sqrt(max(w * h, 1.0))
             return np.array([xyxy[0] - buf, xyxy[1] - buf, xyxy[2] + buf, xyxy[3] + buf])
 
-        is_raw_a = tracks and isinstance(tracks[0], np.ndarray)
-        is_raw_b = detections and isinstance(detections[0], np.ndarray)
+        def _get_boxes(items):
+            if items and isinstance(items[0], np.ndarray):
+                return items
+            return [t.xywha if t.angle is not None else t.xyxy for t in items]
 
-        # Expand track boxes
-        if is_raw_a:
-            aboxes = [_expand_fixed(b, buffer_ratio) if len(b) == 4 else b for b in tracks]
-        else:
-            aboxes = []
-            for t in tracks:
-                box = t.xywha if t.angle is not None else t.xyxy
-                if len(box) == 4:
-                    conf = getattr(t, 'score', 0.5)
-                    aboxes.append(_expand_xyxy(box, (1 - conf) / 2))
-                else:
-                    aboxes.append(box)
+        aboxes = _get_boxes(tracks)
+        bboxes = _get_boxes(detections)
 
-        # Expand detection boxes using the paired track's conf (not available per-pair)
-        # Use fixed ratio for detections since we don't know which track they'll match
-        if is_raw_b:
-            bboxes = [_expand_fixed(b, buffer_ratio) if len(b) == 4 else b for b in detections]
-        else:
-            bboxes = []
-            for d in detections:
-                box = d.xywha if d.angle is not None else d.xyxy
-                if len(box) == 4:
-                    conf = getattr(d, 'score', 0.5)
-                    bboxes.append(_expand_xyxy(box, (1 - conf) / 4))
-                else:
-                    bboxes.append(box)
+        # Only expand xyxy (4-element) boxes, not rotated (5-element)
+        aboxes_exp = [_expand_xyxy(b, buffer_ratio) if len(b) == 4 else b for b in aboxes]
+        bboxes_exp = [_expand_xyxy(b, buffer_ratio) if len(b) == 4 else b for b in bboxes]
 
-        return matching.iou_distance(aboxes, bboxes)
+        return matching.iou_distance(aboxes_exp, bboxes_exp)
 
     def update(self, results, img=None, feats=None):
         """Update tracker with new detections using OC-SORT association pipeline."""
