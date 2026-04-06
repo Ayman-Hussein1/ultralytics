@@ -10,6 +10,7 @@ Usage:
     model.add_callback("on_pretrain_routine_start", wandb_config.log_config())
 """
 
+import os
 from pathlib import Path
 
 from ultralytics.utils import YAML
@@ -41,12 +42,11 @@ def log_config(**extra_kv):
         try:
             import wandb
 
-            if wandb.run:
-                # Set WandB group if provided (e.g. "distill", "downstream-imagenet")
-                if "wandb_group" in config:
-                    wandb.run.group = config.pop("wandb_group")
-                if config:
-                    wandb.run.config.update(config, allow_val_change=True)
+            # Set group via env var so wandb.init() picks it up
+            if "wandb_group" in config:
+                os.environ["WANDB_RUN_GROUP"] = config.pop("wandb_group")
+            if wandb.run and config:
+                wandb.run.config.update(config, allow_val_change=True)
         except ImportError:
             pass
 
