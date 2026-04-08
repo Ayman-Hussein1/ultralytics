@@ -102,20 +102,19 @@ def _remap_state_dict(state_dict: dict) -> dict:
             mapped[new_k] = v
             continue
 
-        # depth_head.scratch.refinenet{1-4}.resConfUnit{1,2} → depth_head.refinenets.{0-3}.res_conv{1,2}
-        m = re.match(r"depth_head\.scratch\.refinenet(\d+)\.resConfUnit(\d+)\.(.*)", k)
+        # depth_head.scratch.refinenet{1-4}.resConfUnit{1,2} → depth_head.refinenets.{0-3}.resConfUnit{1,2}
+        m = re.match(r"depth_head\.scratch\.refinenet(\d+)\.(resConfUnit\d+\..*)", k)
         if m:
             net_idx = int(m.group(1)) - 1
-            unit_idx = int(m.group(2))
-            new_k = f"depth_head.refinenets.{net_idx}.res_conv{unit_idx}.{m.group(3)}"
+            new_k = f"depth_head.refinenets.{net_idx}.{m.group(2)}"
             mapped[new_k] = v
             continue
 
-        # depth_head.scratch.refinenet{1-4}.out_conv → depth_head.refinenets.{0-3}.output_conv
-        m = re.match(r"depth_head\.scratch\.refinenet(\d+)\.out_conv\.(.*)", k)
+        # depth_head.scratch.refinenet{1-4}.out_conv → depth_head.refinenets.{0-3}.out_conv
+        m = re.match(r"depth_head\.scratch\.refinenet(\d+)\.(out_conv\..*)", k)
         if m:
             net_idx = int(m.group(1)) - 1
-            new_k = f"depth_head.refinenets.{net_idx}.output_conv.{m.group(2)}"
+            new_k = f"depth_head.refinenets.{net_idx}.{m.group(2)}"
             mapped[new_k] = v
             continue
 
