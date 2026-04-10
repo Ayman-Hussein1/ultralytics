@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 
 from ultralytics.utils import LOGGER, YAML
-from ultralytics.utils.checks import check_executorch_requirements, check_requirements
+from ultralytics.utils.checks import check_requirements
 
 
 def torch2ethos(
@@ -30,7 +30,7 @@ def torch2ethos(
         (str): Path to the exported ExecuTorch with ARM Ethos-U Backend model directory.
     """
     check_executorch_requirements()
-    check_requirements("tosa-tools", "ethos-u-vela")
+    check_requirements(["tosa-tools", "ethos-u-vela"])
 
     from executorch import version as executorch_version
     from executorch.backends.arm.ethosu import EthosUCompileSpec
