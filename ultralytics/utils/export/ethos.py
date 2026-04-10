@@ -9,6 +9,7 @@ import torch
 from ultralytics.utils import LOGGER, YAML
 from ultralytics.utils.checks import check_requirements
 
+
 def torch2ethos(
     torch_model: torch.nn.Module,
     file: Path | str,
