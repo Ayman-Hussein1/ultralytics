@@ -191,6 +191,12 @@ def knn_callback(data_path, k=20, temp=0.07, every_n_epochs=5, batch_size=256, w
                 auto_augment="",
                 erasing=0.0,
                 crop_fraction=1.0,
+                scale=0.92,
+                fliplr=0.5,
+                flipud=0.0,
+                hsv_h=0.015,
+                hsv_s=0.4,
+                hsv_v=0.4,
             )
             train_ds = ClassificationDataset(str(root / "train"), args=args, augment=False, prefix="knn-train")
             val_ds = ClassificationDataset(str(root / "val"), args=args, augment=False, prefix="knn-val")
