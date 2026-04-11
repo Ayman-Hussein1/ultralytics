@@ -12,6 +12,7 @@ def run_ray_tune(
     grace_period: int = 10,
     gpu_per_trial: int | None = None,
     max_samples: int = 10,
+    search_alg=None,
     **train_args,
 ):
     """Run hyperparameter tuning using Ray Tune.
@@ -145,6 +146,7 @@ def run_ray_tune(
             trainable_with_resources,
             param_space=space,
             tune_config=tune.TuneConfig(
+                search_alg=search_alg,
                 scheduler=asha_scheduler,
                 num_samples=max_samples,
                 trial_name_creator=lambda trial: f"{trial.trainable_name}_{trial.trial_id}",
