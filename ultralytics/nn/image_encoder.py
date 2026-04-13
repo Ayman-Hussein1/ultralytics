@@ -32,7 +32,7 @@ def _make_adaptor(in_dim, out_dim, hidden_dim=None):
         out_dim (int): Output dimension matching teacher embed_dim.
         hidden_dim (int, optional): MLP hidden dimension. Defaults to in_dim.
     """
-    h = hidden_dim or in_dim
+    h = hidden_dim if hidden_dim is not None else in_dim
     return nn.Sequential(
         nn.Linear(in_dim, h, bias=False),
         nn.LayerNorm(h),
