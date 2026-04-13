@@ -14,6 +14,7 @@ def torch2ethos(
     torch_model: torch.nn.Module,
     file: Path | str,
     sample_input: torch.Tensor,
+    target: str = "ethos-u55-128",
     metadata: dict | None = None,
     prefix: str = "",
 ) -> str:
@@ -23,6 +24,7 @@ def torch2ethos(
         torch_model (torch.nn.Module): PyTorch model to export.
         file (Path | str): Source model file path used to derive output names.
         sample_input (torch.Tensor): Example input tensor for tracing/export.
+        target (str, optional): Ethos target to compile for.
         metadata (dict | None, optional): Optional metadata to save as YAML.
         prefix (str, optional): Prefix for log messages.
 
@@ -36,20 +38,21 @@ def torch2ethos(
     from executorch import version as executorch_version
     from executorch.backends.arm.ethosu import EthosUCompileSpec
     from executorch.backends.arm.quantizer import EthosUQuantizer, get_symmetric_quantization_config
+    from executorch.extension.export_util.utils import save_pte_program
     from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
 
     LOGGER.info(f"\n{prefix} starting export with ExecuTorch {executorch_version.__version__}...")
 
     file = Path(file)
-    output_dir = Path(str(file).replace(file.suffix, "_executorch_model"))
+    output_dir = Path(str(file).replace(file.suffix, "_ethos_model"))
     output_dir.mkdir(parents=True, exist_ok=True)
+    pte_file = output_dir / file.with_suffix(".pte").name
 
     exported_program = torch.export.export(torch_model, (sample_input,))
     graph_module = exported_program.module(check_guards=False)
 
     compile_spec = EthosUCompileSpec(
-        target="ethos-u55-128",
-        system_config="Ethos_U55_High_End_Embedded",
+        target=target,
         memory_mode="Shared_Sram",
     )
 
@@ -72,7 +75,6 @@ def torch2ethos(
         ExecutorchBackendConfig,
         to_edge_transform_and_lower,
     )
-    from executorch.extension.export_util.utils import save_pte_program
 
     # Create partitioner from compile spec
     partitioner = EthosUPartitioner(compile_spec)
@@ -94,7 +96,6 @@ def torch2ethos(
     _ = executorch_program_manager.exported_program().module(check_guards=False).print_readable()
 
     # Save pte file
-    pte_file = output_dir / file.with_suffix(".pte").name
     save_pte_program(executorch_program_manager, str(pte_file))
 
     if metadata is not None:
