@@ -290,7 +290,7 @@ parser.add_argument("--device", type=str, default="0,1")
 # val
 parser.add_argument("--val", type=str, default="True", choices=["True", "False"])
 parser.add_argument("--name", type=str, default="yoloe_vp")
-parser.add_argument("--clip_weight_name", type=str, default="mobileclip2:b") 
+# parser.add_argument("--clip_weight_name", type=str, default="mobileclip2:b") 
 parser.add_argument("--scale", type=float, default=0.9)
 
 parser.add_argument("--ag", type=str, default="False", choices=["True", "False"]) # all grounding
@@ -309,7 +309,7 @@ parser.add_argument("--momentum",type=float, default=0.9)
 parser.add_argument("--weight_decay",type=float, default=0.0007)
 parser.add_argument("--lrf", type=float, default=0.5)
 parser.add_argument("--lr0", type=float, default=0.00125)  # initial learning rate
-parser.add_argument("--o2m", type=float, default=0.1)
+# parser.add_argument("--o2m", type=float, default=0.1)
 parser.add_argument("--copy_paste", type=float, default=0.15)
 parser.add_argument("--mixup", type=float, default=0.05)
 parser.add_argument("--semseg_loss", type=str, default="False", choices=["True", "False"]) # if use segseg_loss 
@@ -460,7 +460,7 @@ train_args=dict( data=data,
     workers=args.workers,
     max_det=args.max_det,
     trainer=trainer_class,  # use YOLOEVPTrainer if converted to detection model
-    clip_weight_name=args.clip_weight_name,
+    # clip_weight_name=args.clip_weight_name,
     device=args.device,
     save_period=args.save_period,
     val=args.val,
@@ -471,7 +471,7 @@ train_args=dict( data=data,
     copy_paste=args.copy_paste, 
     mixup=args.mixup,
     dfl=6.0,
-    o2m=args.o2m,
+    # o2m=args.o2m,
     warmup_epochs=1,
     warmup_bias_lr=0.0,
     lr0=args.lr0,
