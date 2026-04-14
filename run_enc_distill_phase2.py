@@ -65,7 +65,7 @@ def main(argv: list[str]) -> None:
     epochs = int(argv[5]) if len(argv) > 5 else None
     patience = int(argv[6]) if len(argv) > 6 else None
 
-    if mode == "coco_det":
+    if mode in ("coco_det", "coco_det_frozen"):
         # Infer det model from phase1 cls model (e.g. yolo26s-cls.yaml -> yolo26s.yaml)
         cls_yaml = "yolo26s-cls.yaml"
         args_yaml = Path(phase1_weights).parent.parent / "args.yaml"
@@ -82,7 +82,7 @@ def main(argv: list[str]) -> None:
     model = YOLO(model_yaml)
     # NOTE: C2PSA remap tested and abandoned (17.77% vs 28.02% without remap).
     # Standard pretrained= flow transfers backbone layers 0-8 via intersect_dicts.
-    if mode in ("finetune", "coco_det"):
+    if mode in ("finetune", "coco_det", "coco_det_frozen"):
         model.add_callback("on_train_start", muon_w.override(0.1))
     model.add_callback("on_train_start", grad_clip.override(1.0))
     model.add_callback(
@@ -141,7 +141,7 @@ def main(argv: list[str]) -> None:
             optimizer="AdamW",
             **_AUG_ARGS,
         )
-    elif mode == "coco_det":
+    elif mode in ("coco_det", "coco_det_frozen"):
         train_args.update(
             data="coco.yaml",
             epochs=epochs or 70,
@@ -162,6 +162,8 @@ def main(argv: list[str]) -> None:
             fliplr=0.304,
             optimizer="MuSGD",
         )
+        if mode == "coco_det_frozen":
+            train_args["freeze"] = 9  # freeze backbone layers 0-8
     else:  # finetune (default)
         train_args.update(
             data="/data/shared-datasets/imagenet",

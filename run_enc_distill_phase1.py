@@ -51,6 +51,7 @@ def main(argv: list[str]) -> None:
     )
     recipe = argv[3] if len(argv) > 3 else "default"
     model_yaml = argv[4] if len(argv) > 4 else "yolo26s-cls.yaml"
+    data = argv[5] if len(argv) > 5 else "/data/shared-datasets/datacomp-12m"
     r = RECIPES[recipe]
 
     model = YOLO(model_yaml)
@@ -74,7 +75,7 @@ def main(argv: list[str]) -> None:
     train_args = dict(
         trainer=ImageEncoderTrainer,
         teachers=teachers,
-        data="/data/shared-datasets/datacomp-12m",
+        data=data,
         knn_eval="/data/shared-datasets/imagenet",
         device=gpu,
         project=resume_args.get("project", "yolo-next-encoder"),
