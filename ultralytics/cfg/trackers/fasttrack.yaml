@@ -1,0 +1,25 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# FastTracker defaults for mode="track"
+# Occlusion-aware tracker with mean history recovery and IoU-based init suppression
+# Docs: https://docs.ultralytics.com/modes/track/
+
+tracker_type: fasttrack # (str) Tracker backend: botsort|bytetrack|fasttrack
+track_high_thresh: 0.6 # (float) First-stage detection threshold; paper uses 0.65-0.7 per sequence
+track_low_thresh: 0.25 # (float) Second-stage low-score detection threshold; paper hardcodes 0.25
+new_track_thresh: 0.6 # (float) Start a new track if no match >= this; matches track_high_thresh
+track_buffer: 30 # (int) Frames to keep lost tracks alive; paper tunes 14-30 per sequence
+match_thresh: 0.85 # (float) Association similarity threshold; paper uses 0.85
+fuse_score: True # (bool) Fuse detection score with motion/IoU for matching
+
+# Occlusion handling
+occ_iou_thresh: 0.7 # (float) IoU threshold to detect occlusion between tracks
+reset_velocity_offset: 5 # (int) Frames back to reset velocity from mean history when occluded
+reset_position_offset: 3 # (int) Frames back to reset position from mean history when occluded
+enlarge_bbox_factor: 1.1 # (float) Multiply bbox height on first occlusion frame to aid re-identification
+dampen_motion_factor: 0.89 # (float) Velocity dampening during occlusion (0.89 = 11% reduction per frame)
+occ_to_lost_thresh: 10 # (int) Frames occluded before marking track as lost
+recent_occ_window: 40 # (int) Frames after occlusion ends to still consider track as recently occluded
+
+# Init suppression
+init_iou_suppress: 0.8 # (float) IoU threshold to suppress duplicate track initialization; paper uses 0.8
