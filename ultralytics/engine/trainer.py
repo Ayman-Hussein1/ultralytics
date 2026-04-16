@@ -311,8 +311,6 @@ class BaseTrainer:
         )
         always_freeze_names = [".dfl"]  # always freeze these layers
         freeze_layer_names = [f"model.{x}." for x in freeze_list] + always_freeze_names
-        if isinstance(unwrap_model(self.model), DistillationModel):
-            freeze_layer_names.append("teacher_model.")
         self.freeze_layer_names = freeze_layer_names
         for k, v in self.model.named_parameters():
             # v.register_hook(lambda x: torch.nan_to_num(x))  # NaN to 0 (commented for erratic training results)
@@ -345,8 +343,6 @@ class BaseTrainer:
                 if ema_model is not None and hasattr(ema_model, "teacher_model"):
                     teacher = ema_model.teacher_model.float()
             self.model = DistillationModel(student_model=self.model, teacher_model=teacher).to(self.device)
-            if "teacher_model." not in self.freeze_layer_names:
-                self.freeze_layer_names += ["teacher_model."]
         if self.world_size > 1:
             self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[RANK], find_unused_parameters=True)
 
