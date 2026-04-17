@@ -55,8 +55,9 @@ def onnx2engine_rtx(
     flag = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
     network = builder.create_network(flag)
 
-    half = builder.platform_has_fast_fp16 and half
-    int8 = builder.platform_has_fast_int8 and int8
+    # tensorrt_rtx builds strongly-typed JIT networks by default and does not expose
+    # `platform_has_fast_fp16` / `platform_has_fast_int8`. Precision flags are advisory;
+    # pass the user request through and let the builder validate on the target RTX GPU.
 
     parser = trt.OnnxParser(network, logger)
     if not parser.parse_from_file(onnx_file):
