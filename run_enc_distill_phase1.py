@@ -63,7 +63,6 @@ def main(argv: list[str]) -> None:
     cos_weight = float(cos_w) if cos_w else 0.9
     l1_weight = float(l1_w) if l1_w else 0.1
     cls_l1 = bool(cls_l1_str)
-    lr0 = float(lr_override) if lr_override else r["lr0"]
 
     if resume:
         resume = paths.patch_resume(resume)
@@ -78,6 +77,7 @@ def main(argv: list[str]) -> None:
     data = args[5] if len(args) > 5 else "/data/shared-datasets/datacomp-12m"
     epochs = int(args[6]) if len(args) > 6 else None
     r = RECIPES[recipe]
+    lr0 = float(lr_override) if lr_override else r["lr0"]
 
     model = YOLO(model_yaml)
     if r["grad_clip"]:
