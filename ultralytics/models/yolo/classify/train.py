@@ -62,6 +62,9 @@ class ClassificationTrainer(BaseTrainer):
         overrides["task"] = "classify"
         if overrides.get("imgsz") is None:
             overrides["imgsz"] = 224
+        if overrides.get("afss"):
+            LOGGER.warning("AFSS is not supported for classification, disabling.")
+            overrides["afss"] = False
         super().__init__(cfg, overrides, _callbacks)
 
     def set_model_attributes(self):
