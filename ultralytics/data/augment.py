@@ -1515,6 +1515,81 @@ class SemanticRandomScaleCrop:
         return labels
 
 
+class SemanticRandomScale:
+    """Random scale augmentation for semantic segmentation.
+
+    Randomly scales image and semantic mask by a factor in [scale_min, scale_max] relative to size_range.
+
+    Attributes:
+        scale_min (float): Minimum scale factor.
+        scale_max (float): Maximum scale factor.
+    """
+
+    def __init__(self, scale_min=0.5, scale_max=2.0):
+        """Initialize SemanticRandomScale."""
+        self.scale_min = scale_min
+        self.scale_max = scale_max
+
+    def __call__(self, labels):
+        """Apply random scale to image and semantic mask."""
+        img = labels["img"]
+        h, w = img.shape[:2]
+
+        scale = random.uniform(self.scale_min, self.scale_max)
+        new_h, new_w = int(h * scale), int(w * scale)
+        labels["img"] = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        labels["resized_shape"] = (new_h, new_w)
+
+        if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+            labels["semantic_mask"] = cv2.resize(
+                labels["semantic_mask"], (new_w, new_h), interpolation=cv2.INTER_NEAREST
+            )
+        return labels
+
+
+class SemanticRandomCrop:
+    """Random crop augmentation for semantic segmentation.
+
+    Pads the image to crop_size if smaller, then takes a random crop of fixed size.
+
+    Attributes:
+        crop_size (tuple): Target (h, w) after cropping.
+        pad_val (int): Pixel value used to pad the image when smaller than crop_size.
+        ignore_label (int): Label value used to pad the semantic mask.
+    """
+
+    def __init__(self, crop_size=512, pad_val=114, ignore_label=255):
+        """Initialize SemanticRandomCrop."""
+        self.crop_size = (crop_size, crop_size) if isinstance(crop_size, int) else tuple(crop_size)
+        self.pad_val = pad_val
+        self.ignore_label = ignore_label
+
+    def __call__(self, labels):
+        """Apply padding (if needed) and random crop to image and semantic mask."""
+        img = labels["img"]
+        h, w = img.shape[:2]
+        crop_h, crop_w = self.crop_size
+
+        pad_h = max(crop_h - h, 0)
+        pad_w = max(crop_w - w, 0)
+        if pad_h > 0 or pad_w > 0:
+            img = cv2.copyMakeBorder(
+                img, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=(self.pad_val,) * 3
+            )
+            if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+                labels["semantic_mask"] = cv2.copyMakeBorder(
+                    labels["semantic_mask"], 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=self.ignore_label
+                )
+            h, w = img.shape[:2]
+
+        y0 = random.randint(0, h - crop_h)
+        x0 = random.randint(0, w - crop_w)
+        labels["img"] = img[y0 : y0 + crop_h, x0 : x0 + crop_w]
+        if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+            labels["semantic_mask"] = labels["semantic_mask"][y0 : y0 + crop_h, x0 : x0 + crop_w]
+        return labels
+
+
 class SemanticResize:
     """Resize transform for semantic segmentation validation.
 
@@ -1872,6 +1947,7 @@ class LetterBox:
         stride: int = 32,
         padding_value: int = 114,
         interpolation: int = cv2.INTER_LINEAR,
+        ignore_label: int = 255,
     ):
         """Initialize LetterBox object for resizing and padding images.
 
@@ -1896,6 +1972,7 @@ class LetterBox:
         self.center = center  # Put the image in the middle or top-left
         self.padding_value = padding_value
         self.interpolation = interpolation
+        self.ignore_label = ignore_label
 
     def __call__(self, labels: dict[str, Any] | None = None, image: np.ndarray = None) -> dict[str, Any] | np.ndarray:
         """Resize and pad an image for object detection, instance segmentation, or pose estimation tasks.
@@ -1969,7 +2046,7 @@ class LetterBox:
             sem_mask = labels["semantic_mask"]
             if shape[::-1] != new_unpad:
                 sem_mask = cv2.resize(sem_mask, new_unpad, interpolation=cv2.INTER_NEAREST)
-            sem_mask = cv2.copyMakeBorder(sem_mask, top, bottom, left, right, cv2.BORDER_CONSTANT, value=255)
+            sem_mask = cv2.copyMakeBorder(sem_mask, top, bottom, left, right, cv2.BORDER_CONSTANT, value=self.ignore_label)
             labels["semantic_mask"] = sem_mask
 
         if labels.get("ratio_pad"):

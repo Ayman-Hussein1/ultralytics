@@ -1318,9 +1318,12 @@ class SemanticSegLoss(nn.Module):
                 weight=ce_weight,
             ).to(device=self.device, dtype=self.dtype)
         else:
-            self.ce = nn.CrossEntropyLoss(
-                ignore_index=255, weight=ce_weight.clone() if ce_weight is not None else None
-            ).to(device=self.device, dtype=self.dtype)
+            if self.nc == 1:
+                self.ce = nn.BCEWithLogitsLoss()
+            else:
+                self.ce = nn.CrossEntropyLoss(
+                    ignore_index=255, weight=ce_weight.clone() if ce_weight is not None else None
+                ).to(device=self.device, dtype=self.dtype)
         self.ce_weight = float(getattr(model.args, "ce_weight", 1.0))
         self.dice_weight = float(getattr(model.args, "dice_weight", 1.0))
         self.aux_weight = float(getattr(model.args, "aux_weight", 0.4))
@@ -1336,12 +1339,18 @@ class SemanticSegLoss(nn.Module):
         if self.use_ohem:
             return self.ce(preds, masks)
         else:
-            logits = preds.permute(0, 2, 3, 1).reshape(-1, self.nc)
-            target = masks.reshape(-1)
+            if self.nc == 1:
+                logits = preds.reshape(-1).sigmoid()
+                target = masks.reshape(-1).float()
+            else:
+                logits = preds.permute(0, 2, 3, 1).reshape(-1, self.nc)
+                target = masks.reshape(-1).long()
             return self.ce(logits, target)
 
     def _dice_loss(self, preds, masks):
         """Compute Dice loss excluding ignore pixels."""
+        if self.nc == 1:
+            return self._binary_dice_loss(preds, masks)
         valid = masks != 255
         pred_soft = F.softmax(preds, dim=1)
         target_onehot = F.one_hot(masks.clamp(0, self.nc - 1), self.nc).permute(0, 3, 1, 2).float()
@@ -1349,6 +1358,15 @@ class SemanticSegLoss(nn.Module):
         intersection = (pred_soft * target_onehot * valid_mask).sum(dim=(0, 2, 3))
         cardinality = ((pred_soft + target_onehot) * valid_mask).sum(dim=(0, 2, 3))
         return (1.0 - (2.0 * intersection + 1.0) / (cardinality + 1.0)).mean()
+
+    def _binary_dice_loss(self, preds, masks):
+        """Compute Dice loss for single-class (binary) segmentation, excluding ignore pixels."""
+        valid = (masks != 255).float()
+        pred_soft = preds.squeeze(1).sigmoid()
+        target = (masks == 1).float()
+        intersection = (pred_soft * target * valid).sum()
+        cardinality = ((pred_soft + target) * valid).sum()
+        return 1.0 - (2.0 * intersection + 1.0) / (cardinality + 1.0)
 
     def forward(self, preds, batch):
         """Compute semantic segmentation loss with optional auxiliary loss.

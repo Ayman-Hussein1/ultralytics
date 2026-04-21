@@ -1588,6 +1588,7 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
         """
         self.names = names or {}
         self.nc = len(self.names)
+        self.cm_nc = 2 if self.nc == 1 else self.nc
         self.device = torch.device(device) if device is not None else None
         self.confusion_matrix = None
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
@@ -1613,16 +1614,18 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
         preds = preds.to(metric_device, non_blocking=True).long()
         targets = targets.to(metric_device, non_blocking=True).long()
         if self.confusion_matrix is None:
-            self.confusion_matrix = torch.zeros((self.nc, self.nc), device=metric_device, dtype=torch.int64)
+            self.confusion_matrix = torch.zeros((self.cm_nc, self.cm_nc), device=metric_device, dtype=torch.int64)
 
         valid = (
             (targets != 255)
             & (preds >= 0)
-            & (preds < self.nc)
+            & (preds < self.cm_nc)
             & (targets >= 0)
-            & (targets < self.nc)
+            & (targets < self.cm_nc)
         )
-        hist = torch.bincount(self.nc * targets[valid] + preds[valid], minlength=self.nc**2).reshape(self.nc, self.nc)
+        hist = torch.bincount(
+            self.cm_nc * targets[valid] + preds[valid], minlength=self.cm_nc**2
+        ).reshape(self.cm_nc, self.cm_nc)
         self.confusion_matrix += hist.to(self.confusion_matrix.dtype)
 
     def _compute_iou(self) -> torch.Tensor | None:
@@ -1636,10 +1639,12 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
 
     @property
     def miou(self):
-        """Compute mean Intersection over Union across all classes."""
+        """Compute mean IoU (foreground IoU only for binary segmentation)."""
         iou = self._compute_iou()
         if iou is None:
             return 0.0
+        if self.nc == 1:
+            return float(iou[1].item())
         return float(torch.nanmean(iou).item())
 
     @property
@@ -1652,10 +1657,12 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
 
     @property
     def per_class_iou(self):
-        """Compute per-class IoU values."""
+        """Compute per-class IoU values (foreground IoU only for binary segmentation)."""
         iou = self._compute_iou()
         if iou is None:
             return np.zeros(self.nc, dtype=np.float64)
+        if self.nc == 1:
+            return iou[1:].cpu().numpy()
         return iou.cpu().numpy()
 
     @property

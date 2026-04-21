@@ -99,7 +99,11 @@ class SemanticValidator(BaseValidator):
             if self._semantic_target_shape is not None
             else F.interpolate(preds, scale_factor=4, mode="bilinear", align_corners=False)
         )
-        return preds.argmax(dim=1)
+        if self.nc > 1:
+            pred_mask = preds.argmax(dim=1)
+        else:
+            pred_mask = preds.gt(0).squeeze(1)
+        return pred_mask
 
     def update_metrics(self, preds, batch):
         """Update metrics with predictions and ground truth.
@@ -125,7 +129,8 @@ class SemanticValidator(BaseValidator):
         if RANK == -1 or not dist.is_available() or not dist.is_initialized():
             return
         if self.metrics.confusion_matrix is None:
-            self.metrics.confusion_matrix = torch.zeros((self.nc, self.nc), device=self.device, dtype=torch.int64)
+            cm_nc = self.metrics.cm_nc
+            self.metrics.confusion_matrix = torch.zeros((cm_nc, cm_nc), device=self.device, dtype=torch.int64)
         dist.reduce(self.metrics.confusion_matrix, dst=0, op=dist.ReduceOp.SUM)
 
     def save_pred_masks(self, preds: torch.Tensor, batch: dict[str, Any]) -> None:
@@ -187,7 +192,7 @@ class SemanticValidator(BaseValidator):
         Returns:
             (SemanticDataset): Dataset object.
         """
-        use_rect = mode == "val" and self.args.rect
+        use_rect = mode == "val"
         return SemanticDataset(
             img_path=img_path,
             imgsz=self.args.imgsz,
