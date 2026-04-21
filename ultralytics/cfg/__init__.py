@@ -226,6 +226,7 @@ CFG_INT_KEYS = frozenset(
 )
 CFG_BOOL_KEYS = frozenset(
     {  # boolean-only arguments
+        "afss",
         "save",
         "exist_ok",
         "verbose",
