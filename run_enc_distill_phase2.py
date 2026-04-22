@@ -80,6 +80,7 @@ def main(argv: list[str]) -> None:
     argv, lr_override = _pop_flag(argv, "--lr")
     argv, batch_override = _pop_flag(argv, "--batch")
     argv, nbs_override = _pop_flag(argv, "--nbs")
+    argv, scratch = _pop_flag(argv, "--scratch", is_bool=True)
     if resume:
         resume = paths.patch_resume(resume)
     resume_args = _load_train_args(resume) if resume else {}
@@ -355,6 +356,9 @@ def main(argv: list[str]) -> None:
     if fork_from:
         parent_id, fork_step = fork_from.split(":")
         wandb_config.fork_and_attach(parent_id, int(fork_step), name)
+    if scratch:
+        train_args["pretrained"] = False
+        print("[scratch] pretrained=False, backbone will be randomly initialized")
     model.train(**train_args)
 
 
