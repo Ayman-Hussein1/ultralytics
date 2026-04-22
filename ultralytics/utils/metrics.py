@@ -1013,7 +1013,15 @@ class Metric(SimpleClass):
             [self.px, self.r_curve, "Confidence", "Recall"],
         ]
 
-    def update_image_metrics(self, tp: np.ndarray, target_cls: np.ndarray, pred_cls: np.ndarray, im_name: str) -> None:
+    def update_image_metrics(
+        self,
+        tp: np.ndarray,
+        target_cls: np.ndarray,
+        pred_cls: np.ndarray,
+        conf: np.ndarray,
+        im_name: str,
+        conf_thres: float = None,
+    ) -> None:
         """Update per-image precision, recall, F1, TP, FP, and FN at IoU threshold 0.5.
 
         Args:
@@ -1021,9 +1029,14 @@ class Metric(SimpleClass):
                 >= 0.5) is used.
             target_cls (np.ndarray): Ground truth class labels for the image.
             pred_cls (np.ndarray): Predicted class labels for the image.
+            conf (np.ndarray): Confidence scores for the predictions.
             im_name (str): The image filename used as the per-image key.
+            conf_thres (float, optional): Confidence threshold to filter predictions before computing metrics. If None,
         """
         # Use the default IoU=0.5 column to match the validator's image-level matching policy.
+        if conf_thres is not None:
+            tp = tp[conf >= conf_thres]
+            pred_cls = pred_cls[conf >= conf_thres]
         tp = int(tp[:, 0].sum())
         num_preds = pred_cls.shape[0]
         num_targets = target_cls.shape[0]
@@ -1091,7 +1104,14 @@ class DetMetrics(SimpleClass, DataExportMixin):
         """
         for k in self.stats.keys():
             self.stats[k].append(stat[k])
-        self.box.update_image_metrics(stat["tp"], stat["target_cls"], stat["pred_cls"], stat["im_name"])
+        self.box.update_image_metrics(
+            stat["tp"],
+            stat["target_cls"],
+            stat["pred_cls"],
+            stat["conf"],
+            stat["im_name"],
+            conf_thres=0.25,  # hardcoded to 0.25 for now
+        )
 
     def process(self, save_dir: Path = Path("."), plot: bool = False, on_plot=None) -> dict[str, np.ndarray]:
         """Process predicted results for object detection and update metrics.
