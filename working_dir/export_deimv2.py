@@ -226,12 +226,14 @@ def build_output_paths(args):
     extra_tags = []
     if args.export_eval_idx is not None:
         extra_tags.append(f"eidx{args.export_eval_idx}")
+    if args.format == "engine" and args.half:
+        extra_tags.append("nofp32attn" if args.no_fp32_attn else "fp32attn")
     suffix = f"_{'_'.join(extra_tags)}" if extra_tags else ""
     base_stem = Path(args.name).stem if args.name else f"{weights_path.stem}_op{args.opset}_{sim_tag}_{rope_tag}"
     stem = f"{base_stem}{suffix}"
 
-    # Keep the intermediate ONNX explicitly marked as FP32 for engine builds, since FP16 should be applied by TRT.
-    onnx_precision = "fp16" if args.format == "onnx" and args.half else "fp32"
+    # Name the intermediate ONNX after the requested precision so artifact sets stay easy to compare.
+    onnx_precision = "fp16" if args.half else "fp32"
     engine_precision = "fp16" if args.half else "fp32"
 
     onnx_path = outdir / f"{stem}_{onnx_precision}.onnx"
