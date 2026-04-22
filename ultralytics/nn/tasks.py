@@ -725,7 +725,21 @@ class ReidModel(BaseModel):
         names (dict): Identity names dictionary.
     """
 
-    def __init__(self, cfg="yolo26n-reid.yaml", ch=3, nc=None, verbose=True):
+    def __init__(
+        self,
+        cfg="yolo26n-reid.yaml",
+        ch=3,
+        nc=None,
+        verbose=True,
+        triplet_margin: float = 0.3,
+        label_smoothing: float = 0.1,
+        triplet_weight: float = 1.0,
+        ce_weight: float = 1.0,
+        center_weight: float = 0.0,
+        center_momentum: float = 0.9,
+        focal_gamma: float = 0.0,
+        supcon_temp: float = 0.0,
+    ):
         """Initialize ReidModel with YAML, channels, number of identities, verbose flag.
 
         Args:
@@ -733,9 +747,26 @@ class ReidModel(BaseModel):
             ch (int): Number of input channels.
             nc (int, optional): Number of identity classes.
             verbose (bool): Whether to display model information.
+            triplet_margin (float): Margin for triplet loss.
+            label_smoothing (float): Label smoothing factor for CE loss.
+            triplet_weight (float): Weight for triplet/supcon loss.
+            ce_weight (float): Weight for cross-entropy loss.
+            center_weight (float): Weight for center loss (0 = disabled).
+            center_momentum (float): EMA momentum for updating class centers.
+            focal_gamma (float): Focal loss gamma (0 = standard CE).
+            supcon_temp (float): SupCon temperature (0 = use triplet).
         """
         super().__init__()
         self._from_yaml(cfg, ch, nc, verbose)
+        # Store ReID loss hparams so init_criterion does not depend on trainer side-effects.
+        self.triplet_margin = triplet_margin
+        self.label_smoothing = label_smoothing
+        self.triplet_weight = triplet_weight
+        self.ce_weight = ce_weight
+        self.center_weight = center_weight
+        self.center_momentum = center_momentum
+        self.focal_gamma = focal_gamma
+        self.supcon_temp = supcon_temp
 
     def _from_yaml(self, cfg, ch, nc, verbose):
         """Set model configurations and define the model architecture.
@@ -777,17 +808,23 @@ class ReidModel(BaseModel):
                 m.linear = torch.nn.Linear(m.linear.in_features, nc)
 
     def init_criterion(self):
-        """Initialize the loss criterion for the ReidModel."""
+        """Initialize the loss criterion for the ReidModel.
+
+        Hparams are read from ``self.args`` (set by ``ReidTrainer.set_model_attributes``)
+        when available, otherwise from attributes stored on ``self`` during ``__init__``.
+        This lets hub-loaded / resumed / exported models build the loss without a trainer.
+        """
+        src = getattr(self, "args", self)
         return ReIDLoss(
             nc=self.yaml["nc"],
-            triplet_margin=getattr(self.args, "triplet_margin", 0.3),
-            label_smooth=getattr(self.args, "label_smoothing", 0.1),
-            triplet_weight=getattr(self.args, "triplet_weight", 1.0),
-            ce_weight=getattr(self.args, "ce_weight", 1.0),
-            center_weight=getattr(self.args, "center_weight", 0.0),
-            center_momentum=getattr(self.args, "center_momentum", 0.9),
-            focal_gamma=getattr(self.args, "focal_gamma", 0.0),
-            supcon_temp=getattr(self.args, "supcon_temp", 0.0),
+            triplet_margin=getattr(src, "triplet_margin", self.triplet_margin),
+            label_smooth=getattr(src, "label_smoothing", self.label_smoothing),
+            triplet_weight=getattr(src, "triplet_weight", self.triplet_weight),
+            ce_weight=getattr(src, "ce_weight", self.ce_weight),
+            center_weight=getattr(src, "center_weight", self.center_weight),
+            center_momentum=getattr(src, "center_momentum", self.center_momentum),
+            focal_gamma=getattr(src, "focal_gamma", self.focal_gamma),
+            supcon_temp=getattr(src, "supcon_temp", self.supcon_temp),
         )
 
 

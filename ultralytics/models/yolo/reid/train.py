@@ -50,7 +50,7 @@ class ReidTrainer(ClassificationTrainer):
 
     def set_model_attributes(self):
         """Set the model's identity names and configure loss from trainer args."""
-        super().set_model_attributes
+        super().set_model_attributes()
         self.model.args = self.args
 
     def get_model(self, cfg=None, weights=None, verbose: bool = True):
@@ -64,7 +64,28 @@ class ReidTrainer(ClassificationTrainer):
         Returns:
             (ReidModel): Configured model.
         """
-        model = ReidModel(cfg, nc=self.data["nc"], ch=self.data.get("channels", 3), verbose=verbose and RANK == -1)
+        # Forward ReID loss hparams so ReidModel.init_criterion works without the trainer side-effect.
+        reid_kwargs = {
+            k: getattr(self.args, k)
+            for k in (
+                "triplet_margin",
+                "label_smoothing",
+                "triplet_weight",
+                "ce_weight",
+                "center_weight",
+                "center_momentum",
+                "focal_gamma",
+                "supcon_temp",
+            )
+            if hasattr(self.args, k)
+        }
+        model = ReidModel(
+            cfg,
+            nc=self.data["nc"],
+            ch=self.data.get("channels", 3),
+            verbose=verbose and RANK == -1,
+            **reid_kwargs,
+        )
         if weights:
             model.load(weights)
 
