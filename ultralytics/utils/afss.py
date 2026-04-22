@@ -48,16 +48,16 @@ class AFSSScheduler:
         rng = np.random.RandomState(epoch + self.seed)
         selected = []
 
-        easy_set = []
-        moderate_set = []
+        easy_set = set()
+        moderate_set = set()
         hard_set = []
 
         for i, st in self.state.items():
             s_i = min(st["precision"], st["recall"])
             if s_i > 0.85:
-                easy_set.append(i)
+                easy_set.add(i)
             elif s_i >= 0.55:
-                moderate_set.append(i)
+                moderate_set.add(i)
             else:
                 hard_set.append(i)
 
@@ -66,7 +66,7 @@ class AFSSScheduler:
 
         # Easy set
         if easy_set:
-            forced_easy = [i for i in easy_set if (epoch - 1 - self.state[i]["last_seen_epoch"]) >= 10]
+            forced_easy = {i for i in easy_set if (epoch - 1 - self.state[i]["last_seen_epoch"]) >= 10}
             easy_budget = round(0.02 * len(easy_set))
             forced_easy_quota = min(len(forced_easy), math.floor(0.5 * easy_budget))
             random_easy_quota = easy_budget - forced_easy_quota
@@ -77,19 +77,19 @@ class AFSSScheduler:
                     forced_easy_sample = rng.choice(forced_easy, size=forced_easy_quota, replace=False).tolist()
                 selected.extend(forced_easy_sample)
 
-                remaining_easy = [i for i in easy_set if i not in forced_easy_sample]
+                remaining_easy = {i for i in easy_set if i not in forced_easy_sample}
                 if random_easy_quota > 0 and remaining_easy:
                     random_easy_sample = rng.choice(remaining_easy, size=random_easy_quota, replace=False).tolist()
                     selected.extend(random_easy_sample)
 
         # Moderate set
         if moderate_set:
-            forced_moderate = [i for i in moderate_set if (epoch - 1 - self.state[i]["last_seen_epoch"]) >= 3]
+            forced_moderate = {i for i in moderate_set if (epoch - 1 - self.state[i]["last_seen_epoch"]) >= 3}
             moderate_budget = round(0.4 * len(moderate_set))
             selected.extend(forced_moderate)
 
             random_moderate_quota = moderate_budget - len(forced_moderate)
-            remaining_moderate = [i for i in moderate_set if i not in forced_moderate]
+            remaining_moderate = {i for i in moderate_set if i not in forced_moderate}
             if random_moderate_quota > 0 and remaining_moderate:
                 random_moderate_sample = rng.choice(
                     remaining_moderate, size=random_moderate_quota, replace=False
