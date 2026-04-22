@@ -204,7 +204,7 @@ Once exported, you can point to the TensorRT model path in your tracker config, 
 
 ### TrackTrack
 
-[TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf) (Shim et al., CVPR 2025) is a track-focused online multi-object tracker. Unlike ByteTrack and BoT-SORT which primarily look at matching from the detection side — TrackTrack reasons from each track's perspective and combines multiple cues in a single cost matrix. It introduces two main ideas on top of standard tracking-by-detection:
+[TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf) (Shim et al., CVPR 2025) is a track-focused online multi-object tracker. Unlike ByteTrack and BoT-SORT which primarily look at matching from the detection side TrackTrack reasons from each track's perspective and combines multiple cues in a single cost matrix. It introduces two main ideas on top of standard tracking-by-detection:
 
 - **Track-Perspective-Based Association (TPA):** a multi-cue cost combining HMIoU (IoU modulated by vertical overlap), cosine ReID distance, confidence-projection distance, and corner-angle distance. The assignment is solved iteratively with a threshold that relaxes at each iteration, so high-quality matches are locked in first and harder pairs are revisited with looser gates. Low-confidence detections and detections recovered from a looser secondary NMS pass (`D_del`) are added to the cost with penalty terms so they can still rebind lost tracks without stealing strong matches.
 - **Track-Aware Initialization (TAI):** before spawning a new track, candidate detections are suppressed if they heavily overlap an existing track or a stronger detection. This greatly reduces duplicate IDs in crowded scenes.
@@ -214,7 +214,7 @@ TrackTrack also uses NSA-Kalman updates (measurement-noise scaled by detection c
 #### When to use TrackTrack
 
 - Crowded scenes with frequent occlusion (pedestrians, retail, sports) where duplicate IDs are a problem.
-- Scenarios where you want good performance without necessarily enabling ReID — the multi-cue cost already uses HMIoU, confidence projection, and corner-angle cues.
+- Scenarios where you want good performance without necessarily enabling ReID the multi-cue cost already uses HMIoU, confidence projection, and corner-angle cues.
 - Moving-camera footage where GMC helps, but you also want one-knob control over the speed/accuracy trade-off via `gmc_downscale`, `gmc_max_corners`, and `gmc_skip_frames`.
 
 #### TrackTrack-specific arguments
@@ -606,7 +606,7 @@ To run object tracking on multiple video streams simultaneously, you can use Pyt
 
 ### When should I use TrackTrack instead of BoT-SORT or ByteTrack?
 
-TrackTrack is a good choice when identity preservation is critical — especially in crowded scenes with frequent occlusion. It combines multiple cues (HMIoU, ReID, confidence projection, corner-angle distance) from each track's perspective and solves the association with an iterative threshold, which helps high-quality matches lock in first. Track-Aware Initialization (TAI) also suppresses duplicate spawns before a new ID is created, reducing ID fragmentation. ByteTrack remains the fastest option for simple scenes, BoT-SORT is a strong general-purpose baseline with optional ReID, and TrackTrack trades a bit of overhead for better behavior under occlusion and crowding. Enable it with `tracker="tracktrack.yaml"`:
+TrackTrack is a good choice when identity preservation is critical especially in crowded scenes with frequent occlusion. It combines multiple cues (HMIoU, ReID, confidence projection, corner-angle distance) from each track's perspective and solves the association with an iterative threshold, which helps high-quality matches lock in first. Track-Aware Initialization (TAI) also suppresses duplicate spawns before a new ID is created, reducing ID fragmentation. ByteTrack remains the fastest option for simple scenes, BoT-SORT is a strong general-purpose baseline with optional ReID, and TrackTrack trades a bit of overhead for better behavior under occlusion and crowding. Enable it with `tracker="tracktrack.yaml"`:
 
 !!! example
 
