@@ -51,6 +51,7 @@ Ultralytics YOLO supports the following tracking algorithms. They can be enabled
 
 - [BoT-SORT](https://github.com/NirAharon/BoT-SORT) - Use `botsort.yaml` to enable this tracker.
 - [ByteTrack](https://github.com/FoundationVision/ByteTrack) - Use `bytetrack.yaml` to enable this tracker.
+- [TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf) - Use `tracktrack.yaml` to enable this tracker.
 
 The default tracker is BoT-SORT.
 
@@ -147,6 +148,7 @@ Some tracking behaviors can be fine-tuned by editing the YAML configuration file
 
 - [`botsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/botsort.yaml)
 - [`bytetrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/bytetrack.yaml)
+- [`tracktrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/tracktrack.yaml)
 
 The following table provides a description of each parameter:
 
@@ -156,7 +158,7 @@ The following table provides a description of each parameter:
 
 | **Parameter**       | **Valid Values or Ranges**                    | **Description**                                                                                                                                        |
 | ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tracker_type`      | `botsort`, `bytetrack`                        | Specifies the tracker type. Options are `botsort` or `bytetrack`.                                                                                      |
+| `tracker_type`      | `botsort`, `bytetrack`, `tracktrack`          | Specifies the tracker type. Options are `botsort`, `bytetrack`, or `tracktrack`.                                                                       |
 | `track_high_thresh` | `0.0-1.0`                                     | Threshold used for the first association during tracking. Affects how confidently a detection is matched to an existing track.                         |
 | `track_low_thresh`  | `0.0-1.0`                                     | Threshold for the second association during tracking. Used when the first association fails, with more lenient criteria.                               |
 | `new_track_thresh`  | `0.0-1.0`                                     | Threshold to initialize a new track if the detection does not match any existing tracks. Controls when a new object is considered to appear.           |
