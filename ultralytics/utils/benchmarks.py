@@ -602,10 +602,16 @@ class ProfileModels:
         Returns:
             (tuple[float, float]): Mean and standard deviation of inference time in milliseconds.
         """
+        import onnxruntime as ort
         from ultralytics.nn.backends import ONNXBackend
 
+        # Session options for consistent benchmarking
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.intra_op_num_threads = 8  # Limit the number of threads
+
         # Initialize ONNXBackend with CPU device for consistent benchmarking
-        backend = ONNXBackend(onnx_file, device=torch.device("cpu"), fp16=False)
+        backend = ONNXBackend(onnx_file, device=torch.device("cpu"), fp16=False, session_options=sess_options)
 
         # Prepare input data dictionary for multi-input models
         input_data_dict = {}

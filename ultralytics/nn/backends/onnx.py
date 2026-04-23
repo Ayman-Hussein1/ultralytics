@@ -21,7 +21,14 @@ class ONNXBackend(BaseBackend):
     with static input shapes.
     """
 
-    def __init__(self, weight: str | Path, device: torch.device, fp16: bool = False, format: str = "onnx"):
+    def __init__(
+        self,
+        weight: str | Path,
+        device: torch.device,
+        fp16: bool = False,
+        format: str = "onnx",
+        session_options=None,
+    ):
         """Initialize the ONNX backend.
 
         Args:
@@ -29,9 +36,11 @@ class ONNXBackend(BaseBackend):
             device (torch.device): Device to run inference on.
             fp16 (bool): Whether to use FP16 half-precision inference.
             format (str): Inference engine, either "onnx" for ONNX Runtime or "dnn" for OpenCV DNN.
+            session_options: Optional ONNX Runtime session options.
         """
         assert format in {"onnx", "dnn"}, f"Unsupported ONNX format: {format}."
         self.format = format
+        self.session_options = session_options
         super().__init__(weight, device, fp16)
 
     def load_model(self, weight: str | Path) -> None:
@@ -73,7 +82,7 @@ class ONNXBackend(BaseBackend):
                 f"{providers[0] if isinstance(providers[0], str) else providers[0][0]}"
             )
 
-            self.session = onnxruntime.InferenceSession(weight, providers=providers)
+            self.session = onnxruntime.InferenceSession(weight, self.session_options, providers=providers)
             self.output_names = [x.name for x in self.session.get_outputs()]
 
             # Get metadata
@@ -120,6 +129,8 @@ class ONNXBackend(BaseBackend):
         if self.format == "dnn":
             # OpenCV DNN - only supports single input
             if isinstance(im, dict):
+                if len(im) > 1:
+                    LOGGER.warning("OpenCV DNN only supports single input; using the first dictionary value.")
                 im = next(iter(im.values()))
             self.net.setInput(im.cpu().numpy() if isinstance(im, torch.Tensor) else im)
             return self.net.forward()
@@ -145,7 +156,10 @@ class ONNXBackend(BaseBackend):
             self.session.run_with_iobinding(self.io)
             return self.bindings
         else:
-            return self.session.run(self.output_names, {self.session.get_inputs()[0].name: im.cpu().numpy()})
+            return self.session.run(
+                self.output_names,
+                {self.session.get_inputs()[0].name: im.cpu().numpy() if isinstance(im, torch.Tensor) else im},
+            )
 
 
 class ONNXIMXBackend(ONNXBackend):
