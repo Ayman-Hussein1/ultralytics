@@ -295,7 +295,7 @@ class BaseTrainer:
         """Configure model, optimizer, dataloaders, and training utilities before the training loop."""
         ckpt = self.setup_model()
         self.model = self.model.to(self.device)
-        self._check_nan_value(self.model)
+        self._sanitize_non_finite_values(self.model)
         self.set_model_attributes()
 
         # Compile model
@@ -898,8 +898,12 @@ class BaseTrainer:
                 ) from e
         self.resume = resume
 
-    def _check_nan_value(self, model: torch.nn.Module):
-        """Check for NaN/Inf values in model parameters and sanitize them if found."""
+    def _sanitize_non_finite_values(self, model: torch.nn.Module) -> None:
+        """Check for and sanitize NaN/Inf values in model state_dict tensors.
+
+        Args:
+            model (nn.Module): Model whose parameters will be checked and sanitized.
+        """
         for name, t in model.state_dict().items():
             if not t.dtype.is_floating_point or torch.isfinite(t).all():
                 continue
