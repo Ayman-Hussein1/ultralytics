@@ -374,7 +374,7 @@ class OCSORT(BYTETracker):
 
         return cost
 
-    def _ocr_distance(self, tracks, detections):
+    def _ocr_distance(self, tracks: list[OCSortTrack], detections: list[OCSortTrack]) -> np.ndarray:
         """Compute IoU distance using tracks' last observation positions instead of Kalman predictions.
 
         Args:
