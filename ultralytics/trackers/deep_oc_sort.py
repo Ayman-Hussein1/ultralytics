@@ -195,8 +195,13 @@ class DeepOCSORT(OCSORT):
 
         return dists
 
-    def update(self, results, img=None, feats=None):
-        """Update tracker with Deep OC-SORT pipeline: GMC + ReID + ORU/OCM/OCR + ByteTrack."""
+    def update(self, results, img: np.ndarray | None = None, feats: np.ndarray | None = None) -> np.ndarray:
+        """Advance the tracker by one frame using the Deep OC-SORT pipeline.
+
+        Pipeline: Kalman predict + GMC, IoU+OCM+ReID first association, OCR re-association on
+        remaining tracks (also using ReID when enabled), optional ByteTrack low-conf second pass,
+        unconfirmed-track handling, and new-track init.
+        """
         self.frame_id += 1
         activated_stracks = []
         refind_stracks = []
@@ -352,7 +357,7 @@ class DeepOCSORT(OCSORT):
         merge_track_pools(self, activated_stracks, refind_stracks, lost_stracks, removed_stracks)
         return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
 
-    def reset(self):
-        """Reset the Deep OC-SORT tracker."""
+    def reset(self) -> None:
+        """Reset the Deep OC-SORT tracker, also clearing the GMC warp state."""
         super().reset()
         self.gmc.reset_params()
