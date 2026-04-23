@@ -293,7 +293,13 @@ class FASTTracker(BYTETracker):
                 removed_stracks.append(track)
 
         merge_track_pools(self, activated_stracks, refind_stracks, lost_stracks, removed_stracks)
-        return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
+        # Only emit tracks updated this frame: occluded tracks kept alive by `_handle_occlusions`
+        # carry stale `idx` values from a previous frame's detection list, which would index into
+        # today's results out-of-bounds.
+        return np.asarray(
+            [x.result for x in self.tracked_stracks if x.is_activated and x.frame_id == self.frame_id],
+            dtype=np.float32,
+        )
 
     def _handle_occlusions(self, r_tracked, u_track, activated_stracks, lost_stracks):
         """Flag unmatched tracked tracks as occluded when covered by an active neighbor.
