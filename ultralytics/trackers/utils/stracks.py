@@ -11,6 +11,48 @@ from __future__ import annotations
 import numpy as np
 
 from . import matching
+from ..basetrack import TrackState
+
+
+def merge_track_pools(
+    tracker,
+    activated: list,
+    refind: list,
+    lost: list,
+    removed: list,
+    removed_buffer: int = 1000,
+) -> None:
+    """Apply the standard end-of-frame bookkeeping to a tracker's persistent pools in place.
+
+    Merges newly activated and re-found tracks into `tracker.tracked_stracks`, moves the
+    transitioned tracks into `tracker.lost_stracks`, dedups by IoU, appends removals to
+    `tracker.removed_stracks`, and trims the removed buffer to `removed_buffer` entries.
+
+    Args:
+        tracker: Object exposing `tracked_stracks`, `lost_stracks`, `removed_stracks` lists,
+            plus the `joint_stracks` / `sub_stracks` / `remove_duplicate_stracks` helpers.
+        activated (list): Tracks updated from the Tracked state this frame.
+        refind (list): Tracks re-activated from the Lost state this frame.
+        lost (list): Tracks transitioned to Lost this frame.
+        removed (list): Tracks transitioned to Removed this frame.
+        removed_buffer (int): Maximum number of historical removed tracks to retain.
+
+    Examples:
+        Run end-of-frame bookkeeping inside a tracker's `update` method
+        >>> merge_track_pools(self, activated_stracks, refind_stracks, lost_stracks, removed_stracks)
+    """
+    tracker.tracked_stracks = [t for t in tracker.tracked_stracks if t.state == TrackState.Tracked]
+    tracker.tracked_stracks = tracker.joint_stracks(tracker.tracked_stracks, activated)
+    tracker.tracked_stracks = tracker.joint_stracks(tracker.tracked_stracks, refind)
+    tracker.lost_stracks = tracker.sub_stracks(tracker.lost_stracks, tracker.tracked_stracks)
+    tracker.lost_stracks.extend(lost)
+    tracker.lost_stracks = tracker.sub_stracks(tracker.lost_stracks, tracker.removed_stracks)
+    tracker.tracked_stracks, tracker.lost_stracks = tracker.remove_duplicate_stracks(
+        tracker.tracked_stracks, tracker.lost_stracks
+    )
+    tracker.removed_stracks.extend(removed)
+    if len(tracker.removed_stracks) > removed_buffer:
+        tracker.removed_stracks = tracker.removed_stracks[-removed_buffer:]
 
 
 def joint_stracks(atracks: list, btracks: list) -> list:
