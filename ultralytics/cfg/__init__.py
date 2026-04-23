@@ -511,6 +511,10 @@ def check_dict_alignment(
             "cls_l1",
             "distill_path",
             "adaptor_arch",
+            "grad_clip",
+            "beta2",
+            "muon_w",
+            "nfs_sync",
         }
     if mismatched := [k for k in custom_keys if k not in base_keys and k not in allowed_custom_keys]:
         from difflib import get_close_matches

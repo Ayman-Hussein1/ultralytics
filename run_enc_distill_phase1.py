@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from callbacks import beta2_override, grad_clip, nfs_sync, paths, wandb_config
+from callbacks import paths, wandb_config
 from ultralytics import YOLO
 from ultralytics.models.yolo.classify.train_image_encoder import ImageEncoderTrainer
 
@@ -114,13 +114,7 @@ def main(argv: list[str]) -> None:
     warmup_epochs = r["warmup_epochs"] * scale
 
     model = YOLO(model_yaml)
-    if r["grad_clip"]:
-        model.add_callback("on_train_start", grad_clip.override(r["grad_clip"]))
-    if r["beta2"]:
-        model.add_callback("on_train_start", beta2_override.override(r["beta2"]))
-    sync_start, sync_end = nfs_sync.setup(str(paths.NFS_MIRROR_ROOT), interval_sec=paths.SYNC_INTERVAL_SEC)
-    model.add_callback("on_train_start", sync_start)
-    model.add_callback("on_train_end", sync_end)
+    # grad_clip, beta2, nfs_sync registered inside ImageEncoderTrainer (survives DDP respawn).
     model.add_callback(
         "on_pretrain_routine_start",
         wandb_config.log_config(
@@ -159,6 +153,8 @@ def main(argv: list[str]) -> None:
         lrf=0.01,
         momentum=r["momentum"],
         weight_decay=r["weight_decay"],
+        grad_clip=r["grad_clip"],
+        beta2=r["beta2"],
         warmup_epochs=warmup_epochs,
         warmup_bias_lr=0,
         dropout=0,
@@ -169,6 +165,7 @@ def main(argv: list[str]) -> None:
         deterministic=True,
         fliplr=0.5,
         workers=8,
+        nfs_sync=True,
     )
     if resume:
         train_args["resume"] = resume

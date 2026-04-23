@@ -5,9 +5,9 @@
 #
 # Export validation (2026-04-23 R3.3, RTX PRO 6000 Blackwell, imgsz=224):
 #   PASS: TorchScript, ONNX opset17, OpenVINO, CoreML (.mlpackage ~0.5× ONNX size), TFLite fp32, NCNN, MNN
-#   PASS: TensorRT fp16 — s: 1.948 ms, l: 2.652 ms bs=1 (both ≤1.5× yolo26s-cls conv baseline 1.83 ms)
-#   FAIL: PaddlePaddle "Model not supported yet" (RepMixer conversion gap — same failure on all RepMixer students)
-#   FAIL: RKNN — env-destructive (rknn-toolkit2 AutoUpdate downgrades torch 2.9→2.4, cu12.8→12.1); run in isolated venv
+#   PASS: TensorRT fp16, s=1.948 ms, l=2.652 ms bs=1 (both ≤1.5× yolo26s-cls conv baseline 1.83 ms)
+#   FAIL: PaddlePaddle "Model not supported yet" (RepMixer conversion gap, same failure on all RepMixer students)
+#   FAIL: RKNN (rknn-toolkit2 AutoUpdate downgrades torch 2.9→2.4, cu12.8→12.1); run in isolated venv
 #   ONNX node counts: s=228 (fewer than conv baseline 234), l=804
 
 # Parameters
@@ -15,8 +15,8 @@ nc: 1000 # number of classes
 
 scales:
   # [depth, width, max_channels]
-  s: [1.0, 0.50, 1024] # 5.05 M params; TRT fp16 bs=1 1.948 ms (see header)
-  l: [5.0, 0.75, 1024] # 14.77 M params; TRT fp16 bs=1 2.652 ms (see header)
+  s: [1.0, 0.50, 1024] # 5.05 M params; TRT fp16 bs=1 1.948 ms
+  l: [5.0, 0.75, 1024] # 14.77 M params; TRT fp16 bs=1 2.652 ms
 
 # FastViT backbone: 4 stages @ strides 4/8/16/32 with downsample conv between stages
 backbone:

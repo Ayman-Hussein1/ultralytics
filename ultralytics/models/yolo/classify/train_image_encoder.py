@@ -21,6 +21,7 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
+import callbacks.vit_modules  # noqa: F401  # registers FastViTBlock/MHSABlock for YAML parsing
 from ultralytics.data.augment import classify_augmentations, classify_transforms
 from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.models.yolo.classify.train import ClassificationTrainer
@@ -151,6 +152,25 @@ class ImageEncoderTrainer(ClassificationTrainer):
         self.teachers = raw.split("+") if isinstance(raw, str) else raw
         self._safe_keys = [safe_key(n) for n in self.teachers]
         self._teacher_imgsz = max(TEACHER_REGISTRY[n]["imgsz"] for n in self.teachers)
+
+        # Register hooks here (not in runner): dist.py:57 only serializes self.args to DDP workers.
+        from callbacks import beta2_override, grad_clip, muon_w, nfs_sync, paths  # runner-local package
+        grad_clip_v = getattr(self.args, "grad_clip", None)
+        beta2_v = getattr(self.args, "beta2", None)
+        muon_w_v = getattr(self.args, "muon_w", None)
+        nfs_sync_v = getattr(self.args, "nfs_sync", False)
+        for v, mod in ((grad_clip_v, grad_clip), (beta2_v, beta2_override), (muon_w_v, muon_w)):
+            if v is not None:
+                self.add_callback("on_train_start", mod.override(float(v)))
+        if nfs_sync_v:
+            sync_start, sync_end = nfs_sync.setup(str(paths.NFS_MIRROR_ROOT), interval_sec=paths.SYNC_INTERVAL_SEC)
+            self.add_callback("on_train_start", sync_start)
+            self.add_callback("on_train_end", sync_end)
+        if RANK in (-1, 0):
+            LOGGER.info(
+                f"ImageEncoderTrainer hooks: grad_clip={grad_clip_v} beta2={beta2_v} "
+                f"muon_w={muon_w_v} nfs_sync={nfs_sync_v}"
+            )
 
     def _setup_train(self):
         """Set bf16 autocast after AMP check to avoid poisoning the yolo26n detection test."""
