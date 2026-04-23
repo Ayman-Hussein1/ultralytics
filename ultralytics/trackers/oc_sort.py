@@ -238,7 +238,25 @@ class OCSORT(BYTETracker):
         return dists + self.inertia * self._velocity_direction_cost(tracks, detections)
 
     def update(self, results, img: np.ndarray | None = None, feats: np.ndarray | None = None) -> np.ndarray:
-        """Update tracker with new detections using OC-SORT association pipeline."""
+        """Advance the tracker by one frame and return the currently active tracks.
+
+        Pipeline: BYTE high-score association with IoU+OCM cost, OCR re-association on remaining
+        tracks using the last-observation positions, optional ByteTrack low-conf second pass,
+        unconfirmed-track handling, and new-track init. Each lost-then-rematched track has its
+        Kalman state repaired by :meth:`OCSortTrack.apply_oru` before re-activation.
+
+        Args:
+            results: `Results`-like object exposing `xywh` (or `xywhr`), `conf`, and `cls`,
+                and supporting boolean / ndarray indexing.
+            img (np.ndarray | None): Current frame. Unused by OC-SORT.
+            feats (np.ndarray | None): Optional per-detection appearance features. Unused by
+                OC-SORT; accepted for signature compatibility.
+
+        Returns:
+            (np.ndarray): Float32 array with one row per activated track of the form
+                `[..., track_id, score, cls, det_idx]`. Leading coordinates are `xyxy` for
+                standard boxes or `xywha` for oriented boxes.
+        """
         self.frame_id += 1
         activated_stracks = []
         refind_stracks = []
