@@ -164,7 +164,14 @@ class DeepOCSORT(OCSORT):
     """
 
     def __init__(self, args: Any, frame_rate: int = 30):
-        """Initialize Deep OC-SORT tracker."""
+        """Initialize Deep OC-SORT tracker.
+
+        Args:
+            args (Namespace | IterableSimpleNamespace): Parsed tracker config providing the
+                OC-SORT keys plus `gmc_method`, `proximity_thresh`, `appearance_thresh`,
+                `alpha_fixed_emb`, `with_reid`, and `model`.
+            frame_rate (int): Source video frame rate.
+        """
         super().__init__(args, frame_rate)
 
         # GMC for camera motion compensation
