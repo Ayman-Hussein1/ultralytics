@@ -1,0 +1,103 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+"""R3 ViT-like student blocks for encoder distillation (FastViT + SimpleViT).
+
+Simple-component constraint: Conv2d, BatchNorm2d, LayerNorm, GELU, Linear, F.scaled_dot_product_attention.
+No `nn.MultiheadAttention` (source of AIFI's 1327-node ONNX bloat). No 2D RoPE (ECViT-t hits 554 Constant nodes).
+
+Injected into `ultralytics.nn.tasks` namespace via `callbacks/vit_modules.py` so `parse_model` resolves
+them through `globals()[m]`. All blocks are dim-preserving (C_in == C_out, H/W unchanged).
+"""
+
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class FastViTBlock(nn.Module):
+    """FastViT stages 1-3 block: RepMixer (inference form) + ConvFFN. Dim-preserving 4D in/out.
+
+    Paper: arXiv:2303.14189 §3 (FastViT, Vasu et al. 2023). Reparameterized inference form collapses the train-time
+    RepMixer to `x + DWConv3x3+BN(x)`. ConvFFN inverted-bottleneck: PW → GELU → DW3x3+BN → PW. No LayerNorm in stages
+    1-3 (FastViT paper §3.2 uses BN here for speed).
+
+    Attributes:
+        mixer_dw (nn.Conv2d): Depthwise 3x3 mixing conv.
+        mixer_bn (nn.BatchNorm2d): BN after mixer.
+        ffn_pw1 (nn.Conv2d): 1x1 PW conv to hidden dim.
+        ffn_dw (nn.Conv2d): 3x3 DW conv at hidden dim.
+        ffn_bn (nn.BatchNorm2d): BN on hidden.
+        ffn_pw2 (nn.Conv2d): 1x1 PW conv back to c.
+    """
+
+    def __init__(self, c: int, mlp_ratio: float = 3.0):
+        """Initialize FastViTBlock with dim c and FFN expansion ratio."""
+        super().__init__()
+        self.mixer_dw = nn.Conv2d(c, c, 3, padding=1, groups=c, bias=False)
+        self.mixer_bn = nn.BatchNorm2d(c)
+        hidden = int(c * mlp_ratio)
+        self.ffn_pw1 = nn.Conv2d(c, hidden, 1, bias=False)
+        self.ffn_dw = nn.Conv2d(hidden, hidden, 3, padding=1, groups=hidden, bias=False)
+        self.ffn_bn = nn.BatchNorm2d(hidden)
+        self.ffn_pw2 = nn.Conv2d(hidden, c, 1, bias=False)
+        self.act = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass: residual mixer + residual FFN."""
+        x = x + self.mixer_bn(self.mixer_dw(x))
+        h = self.act(self.ffn_pw1(x))
+        h = self.act(self.ffn_bn(self.ffn_dw(h)))
+        x = x + self.ffn_pw2(h)
+        return x
+
+
+class MHSABlock(nn.Module):
+    """Pre-norm ViT block with SDPA + LN + Linear FFN. Dim-preserving 4D in/out.
+
+    Uses explicit QKV Linear + `F.scaled_dot_product_attention` instead of `nn.MultiheadAttention` (the AIFI bloat
+    source — MHA wraps to 1327 ONNX nodes on yolo26-vit-cls @ opset 17). SDPA decomposes in opset 17 to
+    `MatMul+Softmax+MatMul+Mul(scale)`; the win is skipping PyTorch's MHA wrapper, not graph fusion.
+
+    Used for: FastViT stage 4 (global attention at the coarsest scale); every layer of SimpleViT.
+
+    Attributes:
+        num_heads (int): Number of attention heads. c must be divisible by num_heads.
+        head_dim (int): c // num_heads.
+        ln1 (nn.LayerNorm): Pre-attention norm.
+        qkv (nn.Linear): Fused QKV projection.
+        proj (nn.Linear): Post-attention projection.
+        ln2 (nn.LayerNorm): Pre-FFN norm.
+        fc1 (nn.Linear): FFN first layer.
+        fc2 (nn.Linear): FFN second layer.
+        act (nn.GELU): FFN activation.
+    """
+
+    def __init__(self, c: int, num_heads: int = 6, mlp_ratio: float = 4.0):
+        """Initialize MHSABlock."""
+        super().__init__()
+        assert c % num_heads == 0, f"MHSABlock: c={c} not divisible by num_heads={num_heads}"
+        self.num_heads = num_heads
+        self.head_dim = c // num_heads
+        self.ln1 = nn.LayerNorm(c)
+        self.qkv = nn.Linear(c, 3 * c, bias=False)
+        self.proj = nn.Linear(c, c, bias=False)
+        self.ln2 = nn.LayerNorm(c)
+        hidden = int(c * mlp_ratio)
+        self.fc1 = nn.Linear(c, hidden)
+        self.act = nn.GELU()
+        self.fc2 = nn.Linear(hidden, c)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass: 4D → tokens → SA + FFN → 4D."""
+        b, c, h, w = x.shape
+        t = x.flatten(2).transpose(1, 2)  # (B, N, C)
+        n = self.ln1(t)
+        qkv = self.qkv(n).reshape(b, -1, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        a = F.scaled_dot_product_attention(q, k, v)
+        a = a.transpose(1, 2).reshape(b, -1, c)
+        t = t + self.proj(a)
+        t = t + self.fc2(self.act(self.fc1(self.ln2(t))))
+        return t.transpose(1, 2).reshape(b, c, h, w)

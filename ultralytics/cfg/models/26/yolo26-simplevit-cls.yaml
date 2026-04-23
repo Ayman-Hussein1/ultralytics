@@ -1,0 +1,23 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# YOLO26-SimpleViT-cls: SimpleViT (arXiv:2205.01580) patchify Conv(k=16,s=16) + repeated MHSA blocks.
+# 14x14 token grid at 224px matches EUPE-ViT-B. No learned pos-embed (export parity).
+# Blocks in ultralytics/nn/modules/vit_blocks.py. Inject before model build: `import callbacks.vit_modules`.
+
+# Parameters
+nc: 1000 # number of classes
+
+scales:
+  # [depth, width, max_channels]
+  s: [1.0, 0.50, 1024] # target ~5-7M params (dim=192 @ s scale, 12 blocks)
+  l: [1.17, 0.75, 1024] # target ~14-16M params (dim=288, 14 blocks)
+
+# SimpleViT backbone: Conv patchify + 12 MHSABlocks
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [384, 16, 16]] # 0 P1/16  patchify to 14x14 grid (384*width channels)
+  - [-1, 12, MHSABlock, [6, 4]] # 1 12 repeated transformer blocks, heads=6, mlp_ratio=4
+
+# Head
+head:
+  - [-1, 1, Classify, [nc]] # 2
