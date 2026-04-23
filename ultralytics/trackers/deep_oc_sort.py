@@ -194,7 +194,20 @@ class DeepOCSORT(OCSORT):
             self.encoder = None
 
     def init_track(self, results, img: np.ndarray | None = None) -> list[DeepOCSortTrack]:
-        """Build :class:`DeepOCSortTrack` instances, attaching ReID features when enabled."""
+        """Build :class:`DeepOCSortTrack` instances, attaching ReID features when enabled.
+
+        When `with_reid=True` and `model="auto"`, `img` should already be a list of native
+        backbone features (one per detection); for any other `model`, `img` is the source frame
+        and the configured external ReID encoder is invoked on detection crops.
+
+        Args:
+            results: Object exposing `xywh` (or `xywhr`), `conf`, and `cls`.
+            img (np.ndarray | None): Either the BGR frame or pre-extracted feature tensors,
+                depending on the ReID configuration.
+
+        Returns:
+            (list[DeepOCSortTrack]): One track per detection, empty if no detections.
+        """
         if len(results) == 0:
             return []
         bboxes = results.xywhr if hasattr(results, "xywhr") else results.xywh
