@@ -910,8 +910,8 @@ class BaseTrainer:
             elif name.endswith("running_mean"):
                 t[mask] = 0.0
             else:
-                t[torch.isnan(t)] = 0.0
-        LOGGER.warning(f"Sanitized {n_bad} non-finite value(s) in {name}.")
+                t[mask] = 0.0
+            LOGGER.warning(f"Sanitized {n_bad} non-finite value(s) in {name}.")
 
     def _load_checkpoint_state(self, ckpt):
         """Load optimizer, scaler, EMA, and best_fitness from checkpoint."""
