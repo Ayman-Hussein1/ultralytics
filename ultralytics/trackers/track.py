@@ -13,7 +13,7 @@ from .byte_tracker import BYTETracker
 from .deep_oc_sort import DeepOCSORT
 from .fast_tracker import FASTTracker
 from .oc_sort import OCSORT
-from .track_tracker import TRACKTRACK
+from .track_tracker import TRACKTRACK, attach_raw_preds_hook, compute_dets_del
 
 # A mapping of tracker types to corresponding tracker classes
 TRACKER_MAP = {
