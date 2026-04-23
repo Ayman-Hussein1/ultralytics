@@ -603,6 +603,7 @@ class ProfileModels:
             (tuple[float, float]): Mean and standard deviation of inference time in milliseconds.
         """
         import onnxruntime as ort
+
         from ultralytics.nn.backends import ONNXBackend
 
         # Session options for consistent benchmarking
