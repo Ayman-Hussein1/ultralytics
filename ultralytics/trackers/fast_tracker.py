@@ -314,6 +314,9 @@ class FASTTracker(BYTETracker):
 
         # --- Init new tracks, suppressed by IoU against already-active tracks ---
         # Keep a plain list of box rows and only stack when we need to compute IoU.
+        # Note: tracks confirmed for the first time this frame may have is_activated=False until
+        # they hit min_track_len, so they won't appear here. New spawns within this loop are
+        # appended below and will suppress each other regardless.
         active_boxes = [t.xyxy for t in activated_stracks if t.is_activated]
         suppress_on = self.init_iou_suppress < 1.0
         for inew in u_detection:
@@ -381,7 +384,9 @@ class FASTTracker(BYTETracker):
             active_ids = np.empty((0,), dtype=np.int64)
 
         unmatched = [r_tracked[i] for i in u_track]
-        unmatched_boxes = np.asarray([t.xyxy for t in unmatched], dtype=np.float32) if unmatched else np.empty((0, 4))
+        unmatched_boxes = (
+            np.asarray([t.xyxy for t in unmatched], dtype=np.float32) if unmatched else np.empty((0, 4), dtype=np.float32)
+        )
 
         if active_boxes.size and unmatched_boxes.size:
             cov = _coverage_matrix(unmatched_boxes, active_boxes)  # (U, A)
@@ -396,7 +401,7 @@ class FASTTracker(BYTETracker):
         for i, track in enumerate(unmatched):
             track.not_matched += 1
 
-            covered = bool(max_cov[i] > self.occ_cover_thresh) if unmatched else False
+            covered = bool(max_cov[i] > self.occ_cover_thresh)
             if covered and not track.is_occluded and track.state == TrackState.Tracked:
                 track.is_occluded = True
                 track.occluded_len = 1
