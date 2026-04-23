@@ -10,11 +10,20 @@ from ultralytics.utils.checks import check_yaml
 
 from .bot_sort import BOTSORT
 from .byte_tracker import BYTETracker
+from .deep_oc_sort import DeepOCSORT
 from .fast_tracker import FASTTracker
+from .oc_sort import OCSORT
 from .track_tracker import TRACKTRACK
 
 # A mapping of tracker types to corresponding tracker classes
-TRACKER_MAP = {"bytetrack": BYTETracker, "botsort": BOTSORT, "tracktrack": TRACKTRACK, "fasttrack": FASTTracker}
+TRACKER_MAP = {
+    "bytetrack": BYTETracker,
+    "botsort": BOTSORT,
+    "tracktrack": TRACKTRACK,
+    "fasttrack": FASTTracker,
+    "ocsort": OCSORT,
+    "deepocsort": DeepOCSORT,
+}
 
 
 def on_predict_start(predictor: object, persist: bool = False) -> None:
@@ -40,9 +49,9 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
     cfg = IterableSimpleNamespace(**YAML.load(tracker))
 
 
-    if cfg.tracker_type not in {"bytetrack", "botsort", "fasttrack", "tracktrack"}:
+    if cfg.tracker_type not in TRACKER_MAP:
         raise AssertionError(
-            f"Only 'bytetrack', 'botsort', 'fasttrack' and 'tracktrack' are supported for now, but got '{cfg.tracker_type}'"
+            f"Only {sorted(TRACKER_MAP)} are supported for now, but got '{cfg.tracker_type}'"
         )
 
     predictor._feats = None  # reset ReID pre-hook state
@@ -51,7 +60,7 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
 
     # "auto" ReID reads backbone features via a forward pre-hook on the Detect layer. If the model
     # doesn't expose the right head (end2end, non-standard), fall back to an external cls model.
-    if cfg.tracker_type in {"botsort", "tracktrack"} and cfg.with_reid and cfg.model == "auto":
+    if cfg.tracker_type in {"botsort", "tracktrack", "deepocsort"} and cfg.with_reid and cfg.model == "auto":
         from ultralytics.nn.modules.head import Detect
 
         if not (
