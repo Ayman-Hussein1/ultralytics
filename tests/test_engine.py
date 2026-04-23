@@ -210,7 +210,6 @@ def test_non_finite_value_handling():
     from ultralytics.models.yolo import detect
     from ultralytics.utils.torch_utils import ModelEMA
 
-    # Test _sanitize_non_finite_values on trainer
     class DummyModel(nn.Module):
         def __init__(self):
             super().__init__()
@@ -219,6 +218,7 @@ def test_non_finite_value_handling():
 
     model = DummyModel()
     ema = ModelEMA(model)
+
     model.bn.running_var[0] = float("inf")
     model.bn.running_mean[0] = float("nan")
     with torch.no_grad():
@@ -229,18 +229,13 @@ def test_non_finite_value_handling():
     )
     trainer._sanitize_non_finite_values(model)
 
-    assert torch.isfinite(model.bn.running_var).all()
-    assert model.bn.running_var[0] == 1.0
-    assert torch.isfinite(model.bn.running_mean).all()
-    assert model.bn.running_mean[0] == 0.0
-    assert torch.isfinite(model.weight).all()
-    assert model.weight[0] == 0.0
+    assert torch.isfinite(model.bn.running_var).all() and model.bn.running_var[0] == 1.0
+    assert torch.isfinite(model.bn.running_mean).all() and model.bn.running_mean[0] == 0.0
+    assert torch.isfinite(model.weight).all() and model.weight[0] == 0.0
 
     original = ema.ema.state_dict()["weight"].clone()
-
     with torch.no_grad():
         model.weight += 1.0
-
     ema.update(model)
     after_first = ema.ema.state_dict()["weight"].clone()
     assert not torch.equal(after_first, original)
@@ -248,7 +243,5 @@ def test_non_finite_value_handling():
     with torch.no_grad():
         model.weight[0] = float("nan")
     ema.update(model)
-
     after_second = ema.ema.state_dict()["weight"]
-    assert torch.isfinite(after_second).all()
-    assert torch.equal(after_second, after_first)
+    assert torch.isfinite(after_second).all() and torch.equal(after_second, after_first)
