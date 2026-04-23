@@ -40,7 +40,18 @@ class DeepOCSortTrack(OCSortTrack):
         alpha_fixed_emb: float = 0.95,
         det_thresh: float = 0.25,
     ):
-        """Initialize DeepOCSortTrack with appearance features."""
+        """Initialize a :class:`DeepOCSortTrack` with optional appearance features.
+
+        Args:
+            xywh (list[float]): Bounding box in `(x, y, w, h, idx)` or `(x, y, w, h, angle, idx)` format.
+            score (float): Detection confidence in [0, 1].
+            cls (Any): Class label for the detection.
+            delta_t (int): Temporal window for OCM velocity direction computation.
+            feat (np.ndarray | None): Optional appearance feature vector for this detection.
+            alpha_fixed_emb (float): Base EMA factor for embedding updates; higher = slower updates.
+            det_thresh (float): Detection-confidence threshold below which the embedding is
+                replaced rather than blended.
+        """
         super().__init__(xywh, score, cls, delta_t)
         self.smooth_feat = None
         self.curr_feat = None
