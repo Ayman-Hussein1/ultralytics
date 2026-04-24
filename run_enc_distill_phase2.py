@@ -145,7 +145,7 @@ def main(argv: list[str]) -> None:
         amp=True,
         seed=0,
         deterministic=True,
-        workers=8,
+        workers=2,
     )
     if mode == "inet_linear_probe":
         train_args.update(

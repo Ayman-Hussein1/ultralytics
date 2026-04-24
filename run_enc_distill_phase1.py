@@ -164,7 +164,7 @@ def main(argv: list[str]) -> None:
         seed=0,
         deterministic=True,
         fliplr=0.5,
-        workers=8,
+        workers=2,
         nfs_sync=True,
     )
     if resume:
