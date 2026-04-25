@@ -515,6 +515,15 @@ def check_dict_alignment(
             "beta2",
             "muon_w",
             "nfs_sync",
+            # DINOv3 / UNIC / DUNE encoder-distillation knobs surfaced through DDP-serialised args.
+            # ``wd_end``: half-cosine target weight_decay (callbacks/wd_schedule.py); reference
+            #   DINOv3 distillation_convnext/convnext_tiny_p16.yaml schedules.weight_decay.
+            # ``grayscale`` / ``gaussian_blur`` / ``solarize``: DINOv3 DataAugmentationDINO photometric
+            #   stack ports (ultralytics/data/augment.py:classify_augmentations docstring for refs).
+            "wd_end",
+            "grayscale",
+            "gaussian_blur",
+            "solarize",
         }
     if mismatched := [k for k in custom_keys if k not in base_keys and k not in allowed_custom_keys]:
         from difflib import get_close_matches

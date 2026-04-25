@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Phase 1: Encoder distillation pretraining on DataComp-12M."""
 
+import os
 import sys
 from pathlib import Path
-import os
 
 _REPO_ROOT = str(Path(__file__).resolve().parent)
 os.environ["PYTHONPATH"] = _REPO_ROOT + os.pathsep + os.environ.get("PYTHONPATH", "")
@@ -25,6 +25,53 @@ RECIPES = {
     # UNIC (ECCV 2024) reproduction used for phase1-b1-unic-eupe-vitb16 (R1 ablation baseline).
     # lr0/wd/warmup matched from /data/shared-datasets/fatih-runs/.../phase1-b1-unic-eupe-vitb16/args.yaml.
     "unic": dict(lr0=6e-4, weight_decay=0.03, warmup_epochs=2, epochs=30, momentum=0.9, grad_clip=3.0, beta2=None),
+    # DINOv3-aligned recipe — addresses the fastvit-s × 7-source collapse to chance-level kNN
+    # observed in fvs-fm/fvs-ad. Mirrors three published recipes that converge with hybrid-ViT
+    # students under multi-source distillation:
+    #   DINOv3 ConvNeXt-T distill ``configs/train/distillation_convnext/convnext_tiny_p16.yaml``:
+    #     lr peak=2e-4, warmup=80/500 ep (16%), wd schedule 0.04→0.2, clip_grad=3.0,
+    #     adamw beta2 default 0.999.
+    #   EUPE SSL ``configs/ssl_default_config.yaml`` optim+schedules: lr=1e-3, wd=0.04→0.4,
+    #     beta2=0.999, multi-crop (2 global @224 + 8 local @96).
+    #   UNIC ``main_unic.py:485-521`` photometric stack: ColorJitter(0.4/0.4/0.2/0.1)@0.8,
+    #     Grayscale@0.2, GaussianBlur(k=9, σ=(0.1, 5.0))@0.2, RandomSolarize(thr=0.5)@0.2.
+    # We adopt single-crop at 224 (multi-crop deferred until loss-path adapter exists).
+    #
+    # Knob → reference mapping:
+    #   lr0=2e-4         → DINOv3 distillation_convnext/convnext_tiny_p16.yaml schedules.lr.peak
+    #   warmup_epochs=18 → DINOv3 80/500 ratio (16%) scaled to 114 ep
+    #   weight_decay=0.04 + wd_end=0.2 → DINOv3 schedules.weight_decay.{start, peak} (callbacks/wd_schedule.py)
+    #   grad_clip=3.0    → DINOv3 optim.clip_grad
+    #   beta2=None       → falls through to AdamW default 0.999 (DINOv3 / EUPE convention)
+    #   auto_augment=""  → disables Ultralytics RandAugment, falls back to plain ColorJitter +
+    #                      our DINOv3-style additions (Grayscale / GaussianBlur / Solarize). Without
+    #                      this, RandAugment is on by default (DEFAULT_CFG) and Ultralytics auto-
+    #                      disables ColorJitter, breaking alignment with DINOv3.
+    #   hsv_h=0.1, hsv_s=0.2, hsv_v=0.4 → maps to T.ColorJitter(brightness=0.4, contrast=0.4,
+    #                      saturation=0.2, hue=0.1), matching DINOv3 DataAugmentationDINO exactly
+    #                      (Ultralytics's classify_augmentations binds brightness=contrast=hsv_v).
+    #   grayscale=0.2    → DINOv3 / UNIC / DUNE
+    #   gaussian_blur=0.5 → DINOv3 averaged across two-view asymmetric (g1=1.0 / g2=0.1); UNIC uses 0.2
+    #   solarize=0.2     → DINOv3 g2-only; applied uniformly to single view here
+    #   erasing=0.0      → DINOv3 / EUPE / UNIC / DUNE / AM-RADIO do NOT use random erasing
+    "dinov3": dict(
+        lr0=2e-4,
+        weight_decay=0.04,
+        wd_end=0.2,
+        warmup_epochs=18,
+        epochs=114,
+        momentum=0.9,
+        grad_clip=3.0,
+        beta2=None,
+        auto_augment=None,
+        erasing=0.0,
+        hsv_h=0.1,
+        hsv_s=0.2,
+        hsv_v=0.4,
+        grayscale=0.2,
+        gaussian_blur=0.5,
+        solarize=0.2,
+    ),
 }
 
 # Reference global step-batch the recipes' lr0 and warmup_epochs are tuned for. When
@@ -116,7 +163,9 @@ def main(argv: list[str]) -> None:
                 )
 
     world_size = len(gpu.split(",")) if "," in gpu else 1
-    global_batch = int(batch_override) * world_size if batch_override else int(resume_args.get("batch", 64 * world_size))
+    global_batch = (
+        int(batch_override) * world_size if batch_override else int(resume_args.get("batch", 64 * world_size))
+    )
     scale = max(1.0, global_batch / NBS_CANONICAL)
     lr0 = float(lr_override or r["lr0"]) * scale
     nbs = max(global_batch, NBS_CANONICAL)
@@ -176,6 +225,13 @@ def main(argv: list[str]) -> None:
         workers=2,
         nfs_sync=True,
     )
+    # Recipe-driven aug overrides — applied only when present so legacy recipes inherit
+    # Ultralytics's DEFAULT_CFG (auto_augment=randaugment, erasing=0.4, hsv_h=0.015, hsv_s=hsv_v=0.4).
+    # Reference recipes (DINOv3 / EUPE / UNIC / DUNE) explicitly disable RandAugment + RandomErasing
+    # and rely on a hand-tuned photometric stack — see RECIPES["dinov3"] docstring above.
+    for k in ("wd_end", "auto_augment", "erasing", "hsv_h", "hsv_s", "hsv_v", "grayscale", "gaussian_blur", "solarize"):
+        if k in r:
+            train_args[k] = r[k]
     if resume:
         train_args["resume"] = resume
     if fork_from:

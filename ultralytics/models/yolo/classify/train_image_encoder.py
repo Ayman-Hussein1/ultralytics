@@ -21,7 +21,8 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
-from ultralytics.data.augment import classify_augmentations, classify_transforms
+from callbacks.distill_aug import classify_augmentations_distill
+from ultralytics.data.augment import classify_transforms
 from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.models.yolo.classify.train import ClassificationTrainer
 from ultralytics.nn.image_encoder import ImageEncoderModel
@@ -153,7 +154,8 @@ class ImageEncoderTrainer(ClassificationTrainer):
         self._teacher_imgsz = max(TEACHER_REGISTRY[n]["imgsz"] for n in self.teachers)
 
         # Register hooks here (not in runner): dist.py:57 only serializes self.args to DDP workers.
-        from callbacks import beta2_override, grad_clip, muon_w, nfs_sync, paths  # runner-local package
+        from callbacks import beta2_override, grad_clip, muon_w, nfs_sync, paths, wd_schedule  # runner-local package
+
         grad_clip_v = getattr(self.args, "grad_clip", None)
         beta2_v = getattr(self.args, "beta2", None)
         muon_w_v = getattr(self.args, "muon_w", None)
@@ -165,10 +167,30 @@ class ImageEncoderTrainer(ClassificationTrainer):
             sync_start, sync_end = nfs_sync.setup(str(paths.NFS_MIRROR_ROOT), interval_sec=paths.SYNC_INTERVAL_SEC)
             self.add_callback("on_train_start", sync_start)
             self.add_callback("on_train_end", sync_end)
+
+        # WD cosine schedule: DINOv3 / DINOv2 / EUPE all ramp weight_decay from a small start
+        # value to a larger end value over training. Reference shapes:
+        #   DINOv3 ConvNeXt-T distill ``configs/train/distillation_convnext/convnext_tiny_p16.yaml``
+        #     schedules.weight_decay {start=0.04, peak=0.2, end=0.2, warmup_epochs=500}.
+        #   EUPE ``configs/ssl_default_config.yaml`` optim.weight_decay=0.04, weight_decay_end=0.4.
+        #   DINOv2 paper §A.3: cosine wd 0.04→0.4.
+        # Activated by setting ``wd_end`` in the runner train_args (None or 0 keeps fixed wd).
+        # Photometric augs (grayscale/gaussian_blur/solarize) live inside Ultralytics's
+        # ``classify_augmentations`` (ultralytics/data/augment.py) — read directly from self.args
+        # when the dataset builds its torch_transforms; no callback needed.
+        # ``weight_decay`` is in CFG_FRACTION_KEYS so already coerced to float by the cfg layer;
+        # ``wd_end`` arrives from the recipe dict as a Python float. No paranoia casts needed.
+        wd_end_v = getattr(self.args, "wd_end", None)
+        if wd_end_v is not None and wd_end_v > 0:
+            self.add_callback(
+                "on_train_epoch_start",
+                wd_schedule.override(start=self.args.weight_decay, end=wd_end_v),
+            )
+
         if RANK in (-1, 0):
             LOGGER.info(
                 f"ImageEncoderTrainer hooks: grad_clip={grad_clip_v} beta2={beta2_v} "
-                f"muon_w={muon_w_v} nfs_sync={nfs_sync_v}"
+                f"muon_w={muon_w_v} nfs_sync={nfs_sync_v} wd_end={wd_end_v}"
             )
 
     def _setup_train(self):
@@ -316,7 +338,7 @@ class ImageEncoderTrainer(ClassificationTrainer):
         """
         sz = self._teacher_imgsz
         if mode == "train":
-            return classify_augmentations(
+            return classify_augmentations_distill(
                 size=sz,
                 mean=IMAGENET_MEAN,
                 std=IMAGENET_STD,
@@ -327,6 +349,9 @@ class ImageEncoderTrainer(ClassificationTrainer):
                 hsv_h=self.args.hsv_h,
                 hsv_s=self.args.hsv_s,
                 hsv_v=self.args.hsv_v,
+                grayscale=getattr(self.args, "grayscale", 0.0),
+                gaussian_blur=getattr(self.args, "gaussian_blur", 0.0),
+                solarize=getattr(self.args, "solarize", 0.0),
                 interpolation="BICUBIC",
             )
         return classify_transforms(size=sz, mean=IMAGENET_MEAN, std=IMAGENET_STD, interpolation="BICUBIC")
