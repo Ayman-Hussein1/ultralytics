@@ -554,12 +554,9 @@ class ProfileModels:
         model = YOLO(engine_file)
         input_data = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)  # use uint8 for Classify
 
-        # Initialize predictor manually and set stride=1 BEFORE any inference to prevent rounding
-        from ultralytics.engine.predictor import BasePredictor
-        from ultralytics.cfg import get_cfg
-
-        args = get_cfg(overrides={"imgsz": self.imgsz, "verbose": False})
-        model.predictor = BasePredictor(overrides=args)
+        # Initialize the task-specific predictor manually so stride can be adjusted before warmup.
+        args = {"imgsz": self.imgsz, "verbose": False, "mode": "predict", "rect": True, "batch": 1}
+        model.predictor = model._smart_load("predictor")(overrides=args, _callbacks=model.callbacks)
         model.predictor.setup_model(model=model.model, verbose=False)
 
         # Set stride to 1 to disable imgsz rounding
