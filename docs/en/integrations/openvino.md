@@ -241,7 +241,6 @@ Benchmarks below run on Intel® Core™ Ultra™ 7 265K and Intel® Core™ Ultr
             | YOLO26x | OpenVINO      | FP16      | ✅      | 107.1     | 0.6552              | 209.65                 |
             | YOLO26x | OpenVINO      | INT8      | ✅      | 54.8      | 0.6441              | 63.53                  |
 
-
 #### Intel® Core™ Ultra™ 7 155H
 
 !!! tip "Benchmarks"
@@ -307,7 +306,6 @@ Benchmarks below run on Intel® Core™ Ultra™ 7 265K and Intel® Core™ Ultr
             | YOLO26x | OpenVINO      | FP32      | ✅      | 213.2     | 0.6552              | 381.03                 |
             | YOLO26x | OpenVINO      | FP16      | ✅      | 107.1     | 0.6552              | 374.99                 |
             | YOLO26x | OpenVINO      | INT8      | ✅      | 54.8      | 0.6446              | 112.87                 |
-
 
 ## Intel® Arc™ GPU
 
@@ -376,7 +374,6 @@ Benchmarks below run on Intel Arc A770 and Intel Arc B580 at FP32, FP16 and INT8
     | YOLO26x | OpenVINO      | FP32      | ✅      | 213.2     | 0.6569              | 5.98                   |
     | YOLO26x | OpenVINO      | FP16      | ✅      | 107.1     | 0.6569              | 6.19                   |
     | YOLO26x | OpenVINO      | INT8      | ✅      | 54.8      | 0.6434              | 4.28                   |
-
 
 ## Reproduce Our Results
 
