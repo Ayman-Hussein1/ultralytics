@@ -1745,7 +1745,7 @@ class CopyPaste(BaseMixTransform):
         instances.convert_bbox(format="xyxy")
         instances.denormalize(w, h)
 
-        im_new = np.zeros(im.shape, np.uint8)
+        im_new = np.zeros(im.shape[:2], np.uint8)
         instances2 = labels2.pop("instances", None)
         if instances2 is None:
             instances2 = deepcopy(instances)
@@ -1758,7 +1758,7 @@ class CopyPaste(BaseMixTransform):
         for j in indexes[: round(self.p * n)]:
             cls = np.concatenate((cls, labels2.get("cls", cls)[[j]]), axis=0)
             instances = Instances.concatenate((instances, instances2[[j]]), axis=0)
-            cv2.drawContours(im_new, instances2.segments[[j]].astype(np.int32), -1, (1, 1, 1), cv2.FILLED)
+            cv2.drawContours(im_new, instances2.segments[[j]].astype(np.int32), -1, 1, cv2.FILLED)
 
         result = labels2.get("img", cv2.flip(im, 1))  # augment segments
         if result.ndim == 2:  # cv2.flip would eliminate the last dimension for grayscale images
@@ -2066,7 +2066,15 @@ class Format:
                 if self.mask_overlap:
                     sem_masks = cls_tensor[masks[0].long() - 1]  # (H, W) from (1, H, W) instance indices
                 else:
+                    # Create sem_masks consistent with mask_overlap=True
                     sem_masks = (masks * cls_tensor[:, None, None]).max(0).values  # (H, W) from (N, H, W) binary
+                    overlap = masks.sum(dim=0) > 1  # (H, W)
+                    if overlap.any():
+                        weights = masks.sum(axis=(1, 2))
+                        weighted_masks = masks * weights[:, None, None]  # (N, H, W)
+                        weighted_masks[masks == 0] = weights.max() + 1  # handle background
+                        smallest_idx = weighted_masks.argmin(dim=0)  # (H, W)
+                        sem_masks[overlap] = cls_tensor[smallest_idx[overlap]]
             else:
                 masks = torch.zeros(
                     1 if self.mask_overlap else nl, img.shape[0] // self.mask_ratio, img.shape[1] // self.mask_ratio
@@ -2374,132 +2382,6 @@ class RandomLoadText:
         assert len(texts) == self.max_samples
         labels["texts"] = texts
         return labels
-
-
-class _RTDETRToTvTensors:
-    def __init__(self) -> None:
-        from torchvision import tv_tensors
-
-        self._tv_tensors = tv_tensors
-
-    @staticmethod
-    def _build_labels_tensor(cls: np.ndarray) -> torch.Tensor:
-        return torch.as_tensor(cls.reshape(-1), dtype=torch.int64) if len(cls) else torch.zeros((0,), dtype=torch.int64)
-
-    def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
-        img = labels.pop("img")
-        instances = labels.pop("instances", None)
-        cls = labels.pop("cls")
-
-        h, w = img.shape[:2]
-        if img.ndim == 3 and img.shape[2] == 3:
-            image = Image.fromarray(img[..., ::-1].copy())  # BGR -> RGB
-        else:
-            image = Image.fromarray(img.copy())
-
-        if instances is None or len(instances) == 0:
-            boxes_tensor = torch.zeros((0, 4), dtype=torch.float32)
-        else:
-            instances.convert_bbox(format="xyxy")
-            instances.denormalize(w, h)
-            boxes_tensor = torch.as_tensor(instances.bboxes, dtype=torch.float32)
-
-        labels["image"] = image
-        labels["boxes"] = self._tv_tensors.BoundingBoxes(boxes_tensor, format="XYXY", canvas_size=(h, w))
-        labels["labels"] = self._build_labels_tensor(cls)
-        return labels
-
-
-class _RTDETRFromTvTensors:
-    @staticmethod
-    def _to_numpy_image(image: Any) -> np.ndarray:
-        if isinstance(image, torch.Tensor):
-            img = image.detach().cpu()
-            if img.ndim == 3:
-                img = img.permute(1, 2, 0)
-            img = img.numpy()
-        else:
-            img = np.asarray(image)
-        if np.issubdtype(img.dtype, np.floating):
-            if img.size and img.max() <= 1.0:
-                img = img * 255.0
-            img = img.round().astype(np.uint8)
-        return img
-
-    def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
-        image = labels.pop("image")
-        boxes_t = labels.pop("boxes", None)
-        labels_t = labels.pop("labels", None)
-
-        img_np = self._to_numpy_image(image)
-        if img_np.ndim == 3 and img_np.shape[2] == 3:
-            img_np = img_np[..., ::-1]  # RGB -> BGR
-
-        if boxes_t is None or boxes_t.numel() == 0:
-            bboxes = np.zeros((0, 4), dtype=np.float32)
-            cls_out = np.zeros((0, 1), dtype=np.int64)
-        else:
-            bboxes = boxes_t.to(torch.float32).cpu().numpy()
-            if labels_t is None:
-                cls_out = np.zeros((len(bboxes), 1), dtype=np.int64)
-            else:
-                cls_out = labels_t.to(torch.int64).view(-1, 1).cpu().numpy()
-
-        labels["img"] = img_np
-        labels["instances"] = Instances(bboxes=bboxes, bbox_format="xyxy", normalized=False)
-        labels["cls"] = cls_out
-        labels["resized_shape"] = img_np.shape[:2]
-        return labels
-
-
-class _RTDETRRandomIoUCrop:
-    def __init__(self, p: float = 1.0, **kwargs) -> None:
-        import torchvision.transforms.v2 as T
-
-        self.p = p
-        self.transform = T.RandomIoUCrop(**kwargs)
-
-    def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
-        if torch.rand(1) >= self.p:
-            return labels
-        return self.transform(labels)
-
-
-def rtdetr_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace, stretch: bool = False):
-    """Apply a series of image transformations for RT-DETR training."""
-    import torchvision.transforms.v2 as T
-
-    fliplr = getattr(hyp, "fliplr", 0.5)
-    mosaic = Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic)
-    copy_paste = CopyPaste(p=hyp.copy_paste, mode="flip")
-
-    rtdetr_pre = Compose([
-        mosaic,
-        copy_paste,
-        _RTDETRToTvTensors(),
-        T.RandomZoomOut(fill=0),
-        _RTDETRRandomIoUCrop(p=0.8),
-        T.SanitizeBoundingBoxes(min_size=1),
-        T.Resize(size=[imgsz, imgsz]),
-        T.SanitizeBoundingBoxes(min_size=1),
-        _RTDETRFromTvTensors(),
-    ])
-
-    rtdetr_post = Compose([
-        _RTDETRToTvTensors(),
-        T.RandomPhotometricDistort(p=0.5),
-        T.RandomHorizontalFlip(p=fliplr),
-        _RTDETRFromTvTensors(),
-    ])
-
-    transforms = Compose([
-        rtdetr_pre,
-        MixUp(dataset, pre_transform=rtdetr_pre, p=hyp.mixup),
-        CutMix(dataset, pre_transform=rtdetr_pre, p=hyp.cutmix),
-        rtdetr_post,
-    ])
-
-    return transforms
 
 
 def v8_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace, stretch: bool = False):

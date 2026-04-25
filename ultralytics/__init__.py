@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-__version__ = "8.4.0"
+__version__ = "8.4.14"
 
 import importlib
 import os
@@ -16,7 +16,7 @@ from ultralytics.utils.downloads import download
 
 settings = SETTINGS
 
-MODELS = ("YOLO", "YOLOWorld", "YOLOE", "NAS", "SAM", "FastSAM", "RTDETR")
+MODELS = ("YOLO", "YOLOWorld", "YOLOE", "NAS", "SAM", "FastSAM", "RTDETR", "RTDETRDEIM", "RTDETRDEIMv2")
 
 __all__ = (
     "__version__",
@@ -29,7 +29,7 @@ __all__ = (
 
 if TYPE_CHECKING:
     # Enable hints for type checkers
-    from ultralytics.models import YOLO, YOLOWorld, YOLOE, NAS, SAM, FastSAM, RTDETR  # noqa
+    from ultralytics.models import YOLO, YOLOWorld, YOLOE, NAS, SAM, FastSAM, RTDETR, RTDETRDEIM, RTDETRDEIMv2  # noqa
 
 
 def __getattr__(name: str):

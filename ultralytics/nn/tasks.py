@@ -27,6 +27,7 @@ from ultralytics.nn.modules import (
     SPPELAN,
     SPPF,
     A2C2f,
+    Add,
     AConv,
     ADown,
     Bottleneck,
@@ -45,7 +46,9 @@ from ultralytics.nn.modules import (
     Conv,
     Conv2,
     ConvTranspose,
+    DEIMDINOv3STAs,
     Detect,
+    DeimDecoder,
     DWConv,
     DWConvTranspose2d,
     Focus,
@@ -63,10 +66,13 @@ from ultralytics.nn.modules import (
     RepC3,
     RepConv,
     RepNCSPELAN4,
+    RepNCSPELAN5,
     RepVGGDW,
     ResNetLayer,
     RTDETRDecoder,
+    RTDETRDecoderv2,
     SCDown,
+    SpatialPriorModulev2,
     Segment,
     Segment26,
     TorchVision,
@@ -77,7 +83,8 @@ from ultralytics.nn.modules import (
     YOLOESegment26,
     v10Detect,
 )
-from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
+from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, RANK, YAML, colorstr, emojis
+from ultralytics.utils.class_map import is_default_numeric_names, names_to_list, remap_class_row_state_dict
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (
     E2ELoss,
@@ -365,11 +372,11 @@ class DetectionModel(BaseModel):
 
     Examples:
         Initialize a detection model
-        >>> model = DetectionModel("yolo11n.yaml", ch=3, nc=80)
+        >>> model = DetectionModel("yolo26n.yaml", ch=3, nc=80)
         >>> results = model.predict(image_tensor)
     """
 
-    def __init__(self, cfg="yolo11n.yaml", ch=3, nc=None, verbose=True):
+    def __init__(self, cfg="yolo26n.yaml", ch=3, nc=None, verbose=True):
         """Initialize the YOLO detection model with the given config and parameters.
 
         Args:
@@ -428,6 +435,24 @@ class DetectionModel(BaseModel):
     def end2end(self):
         """Return whether the model uses end-to-end NMS-free detection."""
         return getattr(self.model[-1], "end2end", False)
+
+    @end2end.setter
+    def end2end(self, value):
+        """Override the end-to-end detection mode."""
+        self.set_head_attr(end2end=value)
+
+    def set_head_attr(self, **kwargs):
+        """Set attributes of the model head (last layer).
+
+        Args:
+            **kwargs: Arbitrary keyword arguments representing attributes to set.
+        """
+        head = self.model[-1]
+        for k, v in kwargs.items():
+            if not hasattr(head, k):
+                LOGGER.warning(f"Head has no attribute '{k}'.")
+                continue
+            setattr(head, k, v)
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs.
@@ -510,11 +535,11 @@ class OBBModel(DetectionModel):
 
     Examples:
         Initialize an OBB model
-        >>> model = OBBModel("yolo11n-obb.yaml", ch=3, nc=80)
+        >>> model = OBBModel("yolo26n-obb.yaml", ch=3, nc=80)
         >>> results = model.predict(image_tensor)
     """
 
-    def __init__(self, cfg="yolo11n-obb.yaml", ch=3, nc=None, verbose=True):
+    def __init__(self, cfg="yolo26n-obb.yaml", ch=3, nc=None, verbose=True):
         """Initialize YOLO OBB model with given config and parameters.
 
         Args:
@@ -542,11 +567,11 @@ class SegmentationModel(DetectionModel):
 
     Examples:
         Initialize a segmentation model
-        >>> model = SegmentationModel("yolo11n-seg.yaml", ch=3, nc=80)
+        >>> model = SegmentationModel("yolo26n-seg.yaml", ch=3, nc=80)
         >>> results = model.predict(image_tensor)
     """
 
-    def __init__(self, cfg="yolo11n-seg.yaml", ch=3, nc=None, verbose=True):
+    def __init__(self, cfg="yolo26n-seg.yaml", ch=3, nc=None, verbose=True):
         """Initialize Ultralytics YOLO segmentation model with given config and parameters.
 
         Args:
@@ -577,11 +602,11 @@ class PoseModel(DetectionModel):
 
     Examples:
         Initialize a pose model
-        >>> model = PoseModel("yolo11n-pose.yaml", ch=3, nc=1, data_kpt_shape=(17, 3))
+        >>> model = PoseModel("yolo26n-pose.yaml", ch=3, nc=1, data_kpt_shape=(17, 3))
         >>> results = model.predict(image_tensor)
     """
 
-    def __init__(self, cfg="yolo11n-pose.yaml", ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+    def __init__(self, cfg="yolo26n-pose.yaml", ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         """Initialize Ultralytics YOLO Pose model.
 
         Args:
@@ -623,11 +648,11 @@ class ClassificationModel(BaseModel):
 
     Examples:
         Initialize a classification model
-        >>> model = ClassificationModel("yolo11n-cls.yaml", ch=3, nc=1000)
+        >>> model = ClassificationModel("yolo26n-cls.yaml", ch=3, nc=1000)
         >>> results = model.predict(image_tensor)
     """
 
-    def __init__(self, cfg="yolo11n-cls.yaml", ch=3, nc=None, verbose=True):
+    def __init__(self, cfg="yolo26n-cls.yaml", ch=3, nc=None, verbose=True):
         """Initialize ClassificationModel with YAML, channels, number of classes, verbose flag.
 
         Args:
@@ -728,6 +753,51 @@ class RTDETRDetectionModel(DetectionModel):
             verbose (bool): Print additional information during initialization.
         """
         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+    @staticmethod
+    def _is_default_numeric_names(names) -> bool:
+        """Return True if names look like default numeric placeholders: {0:'0', 1:'1', ...}."""
+        return is_default_numeric_names(names)
+
+    def load(self, weights, verbose=True, src_names=None, dst_names=None):
+        """Load weights with optional RT-DETR class-row remapping for cross-dataset transfer."""
+        model = weights["model"] if isinstance(weights, dict) else weights
+        csd = model.float().state_dict()
+        state_dict = self.state_dict()
+
+        # Source names: checkpoint names if available.
+        if src_names is None:
+            src_names = getattr(model, "names", None)
+
+        # Destination names: explicit > current model names.
+        if dst_names is None:
+            dst_names = getattr(self, "names", None)
+
+        # Discard denoising_class_embed when class count changes (following DEIM approach).
+        # A partially-remapped embedding is worse than fresh random initialization.
+        # Must run BEFORE class remapping, which would resize the tensor and mask the mismatch.
+        dn_discard = [k for k in csd if "denoising_class_embed" in k and k in state_dict and csd[k].shape != state_dict[k].shape]
+        for k in dn_discard:
+            del csd[k]
+            if verbose:
+                LOGGER.info(f"Discarded '{k}' due to class-count mismatch (will be randomly initialized)")
+
+        src_is_default = is_default_numeric_names(src_names)
+        dst_is_default = is_default_numeric_names(dst_names)
+        src_name_list = names_to_list(src_names)
+        dst_name_list = names_to_list(dst_names)
+        names_match = bool(src_name_list) and src_name_list == dst_name_list
+        if src_names is not None and dst_names is not None and not src_is_default and not dst_is_default and not names_match:
+            csd, remapped, missing = remap_class_row_state_dict(csd, state_dict, src_names=src_names, dst_names=dst_names)
+            if verbose and remapped:
+                LOGGER.info(f"Remapped {len(remapped)} class tensors using source->target class-name map")
+            if verbose and missing:
+                LOGGER.info(f"{len(missing)} target classes were not mapped and kept target initialization")
+
+        updated_csd = intersect_dicts(csd, state_dict)
+        self.load_state_dict(updated_csd, strict=False)
+        if verbose:
+            LOGGER.info(f"Transferred {len(updated_csd)}/{len(self.model.state_dict())} items from pretrained weights")
 
     def one_to_many_targets(self, targets, k):
         """Repeat ground truth targets for one-to-many matching.
@@ -866,14 +936,44 @@ class RTDETRDetectionModel(DetectionModel):
 
     def init_criterion(self):
         """Initialize the loss criterion for the RTDETRDetectionModel."""
-        from ultralytics.models.utils.loss import RTDETRDetectionLoss, RTDETRv4DetectionLoss
+        from ultralytics.models.utils.loss import RTDETRDetectionLoss
+        from ultralytics.models.utils.loss_dfine import DfineLoss
 
         loss_cfg = self.yaml.get("loss", {})
         loss_gain = loss_cfg.get("loss_gain", {}) if isinstance(loss_cfg, dict) else {}
         has_dfine_gain = any(k in loss_gain for k in ("fgl", "ddf"))
         if has_dfine_gain:
-            return RTDETRv4DetectionLoss(nc=self.nc, **loss_cfg)
+            return DfineLoss(nc=self.nc, **loss_cfg)
         return RTDETRDetectionLoss(nc=self.nc, **loss_cfg)
+
+    def _maybe_trap_nonfinite_dfine_boxes(self, pred_boxes: torch.Tensor, enabled: bool) -> None:
+        """Save NaN.pth and abort when DFine predicted boxes become nonfinite in debug mode."""
+        if not enabled or (not torch.isnan(pred_boxes).any() and not torch.isinf(pred_boxes).any()):
+            return
+
+        args = getattr(self, "args", None)
+        save_dir = args.get("save_dir") if isinstance(args, dict) else getattr(args, "save_dir", None)
+        save_path = Path(save_dir) / "weights" / "NaN.pth" if save_dir else Path("./NaN.pth")
+
+        if RANK in {-1, 0}:
+            state = {key.removeprefix("module."): value for key, value in self.state_dict().items()}
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save({"model": state}, save_path)
+
+        raise RuntimeError(f"Nonfinite RT-DETR predicted boxes detected. Saved weights to {save_path}")
+
+    @staticmethod
+    def _cast_floating_loss_inputs_fp32(value):
+        """Recursively cast floating loss inputs to FP32 while preserving non-floating tensors."""
+        if isinstance(value, torch.Tensor):
+            return value.float() if value.is_floating_point() and value.dtype != torch.float32 else value
+        if isinstance(value, dict):
+            return {k: RTDETRDetectionModel._cast_floating_loss_inputs_fp32(v) for k, v in value.items()}
+        if isinstance(value, tuple):
+            return tuple(RTDETRDetectionModel._cast_floating_loss_inputs_fp32(v) for v in value)
+        if isinstance(value, list):
+            return [RTDETRDetectionModel._cast_floating_loss_inputs_fp32(v) for v in value]
+        return value
 
     def loss(self, batch, preds=None):
         """Compute the loss for the given batch of data.
@@ -914,6 +1014,9 @@ class RTDETRDetectionModel(DetectionModel):
         dfine_meta_o2m = None
         if supports_dfine and dfine_meta is not None:
             dfine_meta, dfine_meta_o2m = self._split_dfine_meta(dfine_meta, dn_meta)
+        matcher_epoch = 0
+        if supports_dfine and "epoch" in batch:
+            matcher_epoch = int(batch["epoch"])
         dn_bboxes = split_outputs["dn_bboxes"]
         dn_scores = split_outputs["dn_scores"]
         dec_bboxes = split_outputs["o2o_bboxes"]
@@ -932,10 +1035,28 @@ class RTDETRDetectionModel(DetectionModel):
         dec_bboxes = torch.cat([enc_bboxes.unsqueeze(0), dec_bboxes])  # (7, bs, 300, 4)
         dec_scores = torch.cat([enc_scores.unsqueeze(0), dec_scores])
 
+        self._maybe_trap_nonfinite_dfine_boxes(dec_bboxes, enabled=supports_dfine)
+
+        args = getattr(self, "args", None)
+        strict_loss_fp32 = supports_dfine and (
+            args.get("strict_loss_fp32", False) if isinstance(args, dict) else getattr(args, "strict_loss_fp32", False)
+        )
+
         loss_kwargs = {"dn_bboxes": dn_bboxes, "dn_scores": dn_scores, "dn_meta": dn_meta}
         if supports_dfine:
             loss_kwargs["dfine_meta"] = dfine_meta
-        loss = self.criterion((dec_bboxes, dec_scores), targets, **loss_kwargs)
+            loss_kwargs["matcher_epoch"] = matcher_epoch
+        loss_inputs = (dec_bboxes, dec_scores)
+        loss_targets = targets
+        if strict_loss_fp32:
+            loss_inputs = self._cast_floating_loss_inputs_fp32(loss_inputs)
+            loss_targets = self._cast_floating_loss_inputs_fp32(loss_targets)
+            loss_kwargs = self._cast_floating_loss_inputs_fp32(loss_kwargs)
+        if supports_dfine:
+            with torch.autocast(device_type=img.device.type, enabled=False):
+                loss = self.criterion(loss_inputs, loss_targets, **loss_kwargs)
+        else:
+            loss = self.criterion(loss_inputs, loss_targets, **loss_kwargs)
 
         # One-to-many loss (auxiliary)
         if self.training and one_to_many_groups > 0:
@@ -948,11 +1069,19 @@ class RTDETRDetectionModel(DetectionModel):
             loss_o2m_kwargs = {"dn_bboxes": None, "dn_scores": None, "dn_meta": None}
             if supports_dfine:
                 loss_o2m_kwargs["dfine_meta"] = dfine_meta_o2m
-            loss_o2m = self.criterion((o2m_bboxes, o2m_scores), targets_o2m, **loss_o2m_kwargs)
-            # Combine losses (o2m with lower weight)
-            o2m_weight = 0.5
-            for k in loss:
-                loss[k] = loss[k] + o2m_weight * loss_o2m[k]
+                loss_o2m_kwargs["matcher_epoch"] = matcher_epoch
+            if supports_dfine:
+                with torch.autocast(device_type=img.device.type, enabled=False):
+                    loss_o2m = self.criterion((o2m_bboxes, o2m_scores), targets_o2m, **loss_o2m_kwargs)
+            else:
+                loss_o2m = self.criterion((o2m_bboxes, o2m_scores), targets_o2m, **loss_o2m_kwargs)
+            # Combine one-to-many losses for all available coefficients (main + aux + optional DFine terms).
+            # Denoising is disabled for o2m branch, so *_dn keys are placeholder zeros and are skipped.
+            o2m_weight = 1.0
+            for k, v in loss_o2m.items():
+                if k.endswith("_dn"):
+                    continue
+                loss[f"{k}_o2m"] = v * o2m_weight
 
         # NOTE: There are like 12 losses in RTDETR, backward with all losses but only show enabled losses.
         loss_keys = ["loss_giou", "loss_class", "loss_bbox"]
@@ -960,8 +1089,15 @@ class RTDETRDetectionModel(DetectionModel):
             loss_keys.append("loss_fgl")
         if getattr(self.criterion, "ddf_gain", 0.0) > 0:
             loss_keys.append("loss_ddf")
-        if getattr(self.criterion, "mal_gain", 0.0) > 0:
-            loss_keys.append("loss_mal")
+        # Add o2m losses for debugging if configured (fill with zeros during validation)
+        # Check head attribute directly since dn_meta is None during validation
+        head_o2m_groups = getattr(self.model[-1], "one_to_many_groups", 0)
+        if head_o2m_groups > 0:
+            loss_keys.extend(["loss_giou_o2m", "loss_class_o2m", "loss_bbox_o2m"])
+            # Fill with zeros if not training (o2m only computed during training)
+            if not self.training:
+                for k in ["loss_giou_o2m", "loss_class_o2m", "loss_bbox_o2m"]:
+                    loss[k] = torch.tensor(0.0, device=img.device)
         return sum(loss.values()), torch.as_tensor([loss[k].detach() for k in loss_keys], device=img.device)
 
     def predict(self, x, profile=False, visualize=False, batch=None, augment=False, embed=None):
@@ -1469,7 +1605,7 @@ class Ensemble(torch.nn.ModuleList):
         y = [module(x, augment, profile, visualize)[0] for module in self]
         # y = torch.stack(y).max(0)[0]  # max ensemble
         # y = torch.stack(y).mean(0)  # mean ensemble
-        y = torch.cat(y, 2)  # nms ensemble, y shape(B, HW, C)
+        y = torch.cat(y, 2)  # nms ensemble, y shape(B, HW, C*num_models)
         return y, None  # inference, train output
 
 
@@ -1616,7 +1752,7 @@ def torch_safe_load(weight, safe_only=False):
                     f"with https://github.com/ultralytics/yolov5.\nThis model is NOT forwards compatible with "
                     f"YOLOv8 at https://github.com/ultralytics/ultralytics."
                     f"\nRecommend fixes are to train a new model using the latest 'ultralytics' package or to "
-                    f"run a command with an official Ultralytics model, i.e. 'yolo predict model=yolo11n.pt'"
+                    f"run a command with an official Ultralytics model, i.e. 'yolo predict model=yolo26n.pt'"
                 )
             ) from e
         elif e.name == "numpy._core":
@@ -1629,7 +1765,7 @@ def torch_safe_load(weight, safe_only=False):
             f"{weight} appears to require '{e.name}', which is not in Ultralytics requirements."
             f"\nAutoInstall will run now for '{e.name}' but this feature will be removed in the future."
             f"\nRecommend fixes are to train a new model using the latest 'ultralytics' package or to "
-            f"run a command with an official Ultralytics model, i.e. 'yolo predict model=yolo11n.pt'"
+            f"run a command with an official Ultralytics model, i.e. 'yolo predict model=yolo26n.pt'"
         )
         check_requirements(e.name)  # install missing module
         ckpt = torch_load(file, map_location="cpu")
@@ -1738,6 +1874,7 @@ def parse_model(d, ch, verbose=True):
             C2f,
             C3k2,
             RepNCSPELAN4,
+            RepNCSPELAN5,
             ELAN1,
             ADown,
             AConv,
@@ -1824,6 +1961,8 @@ def parse_model(d, ch, verbose=True):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        elif m is Add:
+            c2 = ch[f[0]]
         elif m in frozenset(
             {
                 Detect,
@@ -1848,7 +1987,7 @@ def parse_model(d, ch, verbose=True):
             args.append([ch[x] for x in f])
         elif m is ImagePoolingAttn:
             args.insert(1, [ch[x] for x in f])  # channels as second arg
-        elif m in {RTDETRDecoder, DFineDecoder}:  # special case, channels arg must be passed in index 1
+        elif m in {RTDETRDecoder, RTDETRDecoderv2, DFineDecoder, DeimDecoder}:  # special case, channels arg must be passed in index 1
             args.insert(1, [ch[x] for x in f])
         elif m is CBLinear:
             c2 = args[0]
@@ -1856,7 +1995,7 @@ def parse_model(d, ch, verbose=True):
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m in frozenset({TorchVision, Timm, PResNet, Index}):
+        elif m in frozenset({TorchVision, Timm, PResNet, DEIMDINOv3STAs, Index}):
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]

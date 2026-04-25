@@ -25,6 +25,7 @@ __all__ = (
     "SPP",
     "SPPELAN",
     "SPPF",
+    "Add",
     "AConv",
     "ADown",
     "Attention",
@@ -48,9 +49,12 @@ __all__ = (
     "Proto",
     "RepC3",
     "RepNCSPELAN4",
+    "RepNCSPELAN5",
     "RepVGGDW",
     "ResNetLayer",
     "SCDown",
+    "SpatialPriorModulev2",
+    "DEIMDINOv3STAs",
     "PResNet",
     "TorchVision",
     "Timm",
@@ -867,6 +871,30 @@ class RepCSP(C3):
         self.m = nn.Sequential(*(RepBottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
 
 
+class _CSPLayer2(nn.Module):
+    """CSP layer variant used by RepNCSPELAN5."""
+
+    def __init__(self, c1: int, c2: int, n: int = 1, e: float = 1.0):
+        """Initialize _CSPLayer2.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of RepConv blocks.
+            e (float): Expansion ratio for hidden channels.
+        """
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, 2 * c_, 1, 1)
+        self.m = nn.Sequential(*(RepConv(c_, c_) for _ in range(n)))
+        self.cv2 = Conv(c_, c2, 1, 1) if c_ != c2 else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through _CSPLayer2."""
+        y = list(self.cv1(x).chunk(2, 1))
+        return self.cv2(y[0] + self.m(y[1]))
+
+
 class RepNCSPELAN4(nn.Module):
     """CSP-ELAN."""
 
@@ -897,6 +925,40 @@ class RepNCSPELAN4(nn.Module):
         """Forward pass using split() instead of chunk()."""
         y = list(self.cv1(x).split((self.c, self.c), 1))
         y.extend(m(y[-1]) for m in [self.cv2, self.cv3])
+        return self.cv4(torch.cat(y, 1))
+
+
+class RepNCSPELAN5(nn.Module):
+    """DEIM-style RepNCSPELAN fusion block."""
+
+    def __init__(self, c1: int, c2: int, c3: int, c4: int, n: int = 1, e: float = 1.0):
+        """Initialize RepNCSPELAN5.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            c3 (int): Intermediate channels before split.
+            c4 (int): Hidden channels used by CSP branches.
+            n (int): Number of RepConv blocks per CSP branch.
+            e (float): Expansion ratio for CSP hidden channels.
+        """
+        super().__init__()
+        self.c = c3 // 2
+        self.cv1 = Conv(c1, c3, 1, 1)
+        self.cv2 = _CSPLayer2(c3 // 2, c4, n, e)
+        self.cv3 = _CSPLayer2(c4, c4, n, e)
+        self.cv4 = Conv(c3 + (2 * c4), c2, 1, 1)
+
+    def forward_chunk(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass using chunk()."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in (self.cv2, self.cv3))
+        return self.cv4(torch.cat(y, 1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass using split()."""
+        y = list(self.cv1(x).split((self.c, self.c), 1))
+        y.extend(m(y[-1]) for m in (self.cv2, self.cv3))
         return self.cv4(torch.cat(y, 1))
 
 
@@ -1038,6 +1100,14 @@ class CBFuse(nn.Module):
         target_size = xs[-1].shape[2:]
         res = [F.interpolate(x[self.idx[i]], size=target_size, mode="nearest") for i, x in enumerate(xs[:-1])]
         return torch.sum(torch.stack(res + xs[-1:]), dim=0)
+
+
+class Add(nn.Module):
+    """Element-wise sum fusion for multiple feature maps."""
+
+    def forward(self, xs: list[torch.Tensor]) -> torch.Tensor:
+        """Forward pass that sums input tensors."""
+        return torch.sum(torch.stack(xs), dim=0)
 
 
 class C3f(nn.Module):
@@ -1552,7 +1622,7 @@ class SCDown(nn.Module):
         torch.Size([1, 128, 64, 64])
     """
 
-    def __init__(self, c1: int, c2: int, k: int, s: int):
+    def __init__(self, c1: int, c2: int, k: int, s: int, act: bool | nn.Module = True):
         """Initialize SCDown module.
 
         Args:
@@ -1560,9 +1630,10 @@ class SCDown(nn.Module):
             c2 (int): Output channels.
             k (int): Kernel size.
             s (int): Stride.
+            act (bool | nn.Module): Activation for the pointwise convolution.
         """
         super().__init__()
-        self.cv1 = Conv(c1, c2, 1, 1)
+        self.cv1 = Conv(c1, c2, 1, 1, act=act)
         self.cv2 = Conv(c2, c2, k=k, s=s, g=c2, act=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -1652,6 +1723,50 @@ class TorchVision(nn.Module):
         return y
 
 
+class SpatialPriorModulev2(nn.Module):
+    """Lightweight spatial-prior module that extracts detail features at P3/P4/P5 scales from an image."""
+
+    def __init__(self, inplanes: int = 16):
+        """Initialize SpatialPriorModulev2.
+
+        Args:
+            inplanes (int): Base channel width used to build output pyramid channels [2*inplanes, 4*inplanes, 4*inplanes].
+        """
+        super().__init__()
+        # 1/4
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, inplanes, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(inplanes),
+            nn.GELU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        )
+        # 1/8 (P3)
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(inplanes, 2 * inplanes, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(2 * inplanes),
+        )
+        # 1/16 (P4)
+        self.conv3 = nn.Sequential(
+            nn.GELU(),
+            nn.Conv2d(2 * inplanes, 4 * inplanes, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(4 * inplanes),
+        )
+        # 1/32 (P5)
+        self.conv4 = nn.Sequential(
+            nn.GELU(),
+            nn.Conv2d(4 * inplanes, 4 * inplanes, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(4 * inplanes),
+        )
+
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Return detail pyramid features [P3, P4, P5]."""
+        c1 = self.stem(x)
+        c2 = self.conv2(c1)
+        c3 = self.conv3(c2)
+        c4 = self.conv4(c3)
+        return [c2, c3, c4]
+
+
 class Timm(nn.Module):
     """Timm module to allow loading any timm model as a backbone.
 
@@ -1700,6 +1815,8 @@ class Timm(nn.Module):
         kwargs = {}
         if imgsz is not None:
             kwargs['img_size'] = imgsz
+        if 'vit' in model.lower():
+            kwargs['dynamic_img_size'] = True
         self.m = timm.create_model(
             model,
             pretrained=pretrained,
@@ -1794,6 +1911,50 @@ class PResNet(nn.Module):
         Returns:
             (list[torch.Tensor]): List of feature tensors from different stages.
         """
+        y = self.m(x)
+        return [x, *y] if self.split else y
+
+
+class DEIMDINOv3STAs(nn.Module):
+    """Wrapper for DEIMv2 DINOv3+STA backbone."""
+
+    def __init__(
+        self,
+        name: str = "dinov3_vits16",
+        pretrained: bool = True,
+        interaction_indexes: tuple[int, ...] = (5, 8, 11),
+        finetune: bool = True,
+        patch_size: int = 16,
+        use_sta: bool = True,
+        conv_inplane: int = 32,
+        hidden_dim: int = 224,
+        split: bool = True,
+        qk_layernorm: bool = False,
+        num_windows: int = 1,
+        global_block_indexes: list[int] | None = None,
+    ):
+        """Initialize DEIMv2 DINOv3 wrapper for Ultralytics model parser."""
+        from ultralytics.nn.backbones.dinov3_adapter import DINOv3STAs as _DINOv3STAs  # scope for faster import
+
+        super().__init__()
+        self.m = _DINOv3STAs(
+            name=name,
+            pretrained=pretrained,
+            interaction_indexes=list(interaction_indexes),
+            finetune=finetune,
+            patch_size=patch_size,
+            use_sta=use_sta,
+            conv_inplane=conv_inplane,
+            hidden_dim=hidden_dim,
+            qk_layernorm=qk_layernorm,
+            num_windows=num_windows,
+            global_block_indexes=list(global_block_indexes) if global_block_indexes is not None else None,
+        )
+        self.split = split
+        self.channels = self.m.out_channels
+
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Forward pass returning [input, P3, P4, P5] when split=True."""
         y = self.m(x)
         return [x, *y] if self.split else y
 

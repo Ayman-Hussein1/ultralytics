@@ -34,12 +34,14 @@ cos_lr: False # (bool) cosine learning rate scheduler
 close_mosaic: 10 # (int) disable mosaic augmentation for final N epochs (0 to keep enabled)
 resume: False # (bool) resume training from last checkpoint in the run dir
 amp: True # (bool) Automatic Mixed Precision (AMP) training; True runs AMP capability check
+ema_tau: 2000 # (int) EMA decay time constant; lower adapts EMA faster (DEIMv2-like value: 1000)
 clip_grad_norm: 10.0 # (float) max gradient norm for clipping; 0.0 disables
 fraction: 1.0 # (float) fraction of training dataset to use (1.0 = all)
 profile: False # (bool) profile ONNX/TensorRT speeds during training for loggers
 freeze: # (int | list, optional) freeze first N layers (int) or specific layer indices (list)
 freeze_bn: none # (str) freeze batchnorm: none, backbone, backbone_neck
-multi_scale: 0.0 # (float) multiscale training by varying image size
+multi_scale: 0.0 # (float) multi-scale range as a fraction of imgsz; sizes are rounded to stride multiples
+base_size_repeat: 0 # (int) extra sampling weight for imgsz in RT-DETR multi-scale; 0 disables repeat weighting
 compile: False # (bool | str) enable torch.compile() backend='inductor'; True="default", False=off, or "default|reduce-overhead|max-autotune-no-cudagraphs"
 
 # Segmentation
@@ -59,6 +61,7 @@ max_det: 300 # (int) maximum number of detections per image
 half: False # (bool) use half precision (FP16) if supported
 dnn: False # (bool) use OpenCV DNN for ONNX inference
 plots: True # (bool) save plots and images during train/val
+end2end: # (bool, optional) whether to use end2end head(YOLO26, YOLOv10) for predict/val/export
 
 # Predict settings -----------------------------------------------------------------------------------------------------
 source: # (str, optional) path/dir/URL/stream for images or videos; e.g. 'ultralytics/assets' or '0' for webcam
@@ -96,12 +99,20 @@ nms: False # (bool) fuse NMS into exported model when backend supports; if True,
 # Hyperparameters ------------------------------------------------------------------------------------------------------
 lr0: 0.01 # (float) initial learning rate (SGD=1e-2, Adam/AdamW=1e-3)
 lrf: 0.01 # (float) final LR fraction; final LR = lr0 * lrf
+lr_scheduler: # (str, optional) scheduler policy for DEIM trainer: linear, cosine, flatcosine
+flat_epoch: # (int, optional) DEIM stage-2 end / stage-3 start epoch (e.g. 34 for 60-epoch schedule)
+no_aug_epoch: # (int, optional) DEIM no-augmentation tail length; if unset, auto-derived from total epochs
+deim_aug_scheduler: legacy # (str) DEIM augmentation scheduler: legacy staged policy or decay for linear prob decay
+aug_decay_min_prob: 0.0 # (float) minimum augmentation probability floor during decay; clean phase always zeros out
 backbone_lr_ratio: 1.0 # (float) learning rate ratio for backbone (1.0 means lr0 for backbone)
+sta_exclusion: True # (bool) exclude STA/SPM params from backbone low-LR grouping in RT-DETR optimizer
+strict_loss_fp32: False # (bool) cast floating RT-DETR loss inputs to FP32 before the main criterion call
 momentum: 0.937 # (float) SGD momentum or Adam beta1
 weight_decay: 0.0005 # (float) weight decay (L2 regularization)
 muon_w: 0.45 # (float) Muon scaling factor for MuSGD optimizer (0.2 recommended)
 sgd_w: 0.55 # (float) SGD scaling factor for MuSGD optimizer (1.0 recommended)
 warmup_epochs: 3.0 # (float) warmup epochs (fractions allowed)
+warmup_iter: 0 # (int) explicit warmup iterations; if >0 overrides warmup_epochs-based warmup
 warmup_momentum: 0.8 # (float) initial momentum during warmup
 warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
 box: 7.5 # (float) box loss gain
@@ -124,6 +135,8 @@ flipud: 0.0 # (float) vertical flip probability
 fliplr: 0.5 # (float) horizontal flip probability
 bgr: 0.0 # (float) RGB↔BGR channel swap probability
 mosaic: 1.0 # (float) mosaic augmentation probability
+mosaic_use_cache: True # (bool) cache RT-DETR DEIM mosaic source samples
+rtdetr_input_normalize: False # (bool) apply RT-DETR mean/std normalization after /255 in train/val preprocess
 mixup: 0.0 # (float) MixUp augmentation probability
 cutmix: 0.0 # (float) CutMix augmentation probability
 copy_paste: 0.0 # (float) segmentation copy-paste probability

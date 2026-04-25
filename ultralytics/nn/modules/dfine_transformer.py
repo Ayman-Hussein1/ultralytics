@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from typing import List
 from .transformer import MLP
 import functools
 import torch.nn.init as init
 import math
 import copy
-from .utils import inverse_sigmoid
+from .utils import deformable_attention_core_func_v2, inverse_sigmoid
 from .dfine_utils import weighting_function, distance2bbox
 
 
@@ -16,81 +15,6 @@ def bias_init_with_prob(prior_prob=0.01):
     """initialize conv/fc bias value according to a given probability value."""
     bias_init = float(-math.log((1 - prior_prob) / prior_prob))
     return bias_init
-
-
-def deformable_attention_core_func_v2(
-    value: torch.Tensor,
-    value_spatial_shapes,
-    sampling_locations: torch.Tensor,
-    attention_weights: torch.Tensor,
-    num_points_list: List[int],
-    method='default',
-    value_shape='default',
-    ):
-    """
-    Args:
-        value (Tensor): [bs, value_length, n_head, c]
-        value_spatial_shapes (Tensor|List): [n_levels, 2]
-        value_level_start_index (Tensor|List): [n_levels]
-        sampling_locations (Tensor): [bs, query_length, n_head, n_levels * n_points, 2]
-        attention_weights (Tensor): [bs, query_length, n_head, n_levels * n_points]
-
-    Returns:
-        output (Tensor): [bs, Length_{query}, C]
-    """
-    # TODO find the version
-    if value_shape == 'default':
-        bs, n_head, c, _ = value[0].shape
-    elif value_shape == 'reshape':   # reshape following RT-DETR
-        bs, _, n_head, c = value.shape
-        split_shape = [h * w for h, w in value_spatial_shapes]
-        value = value.permute(0, 2, 3, 1).flatten(0, 1).split(split_shape, dim=-1)
-    _, Len_q, _, _, _ = sampling_locations.shape
-
-    # sampling_offsets [8, 480, 8, 12, 2]
-    if method == 'default':
-        sampling_grids = 2 * sampling_locations - 1
-
-    elif method == 'discrete':
-        sampling_grids = sampling_locations
-
-    sampling_grids = sampling_grids.permute(0, 2, 1, 3, 4).flatten(0, 1)
-    sampling_locations_list = sampling_grids.split(num_points_list, dim=-2)
-
-    sampling_value_list = []
-    for level, (h, w) in enumerate(value_spatial_shapes):
-        value_l = value[level].reshape(bs * n_head, c, h, w)
-        sampling_grid_l: torch.Tensor = sampling_locations_list[level]
-
-        if method == 'default':
-            sampling_value_l = F.grid_sample(
-                value_l,
-                sampling_grid_l,
-                mode='bilinear',
-                padding_mode='zeros',
-                align_corners=False)
-
-        elif method == 'discrete':
-            # n * m, seq, n, 2
-            sampling_coord = (sampling_grid_l * torch.tensor([[w, h]], device=value_l.device) + 0.5).to(torch.int64)
-
-            # FIX ME? for rectangle input
-            sampling_coord = sampling_coord.clamp(0, h - 1)
-            sampling_coord = sampling_coord.reshape(bs * n_head, Len_q * num_points_list[level], 2)
-
-            s_idx = torch.arange(sampling_coord.shape[0], device=value_l.device).unsqueeze(-1).repeat(1, sampling_coord.shape[1])
-            sampling_value_l: torch.Tensor = value_l[s_idx, :, sampling_coord[..., 1], sampling_coord[..., 0]] # n l c
-
-            sampling_value_l = sampling_value_l.permute(0, 2, 1).reshape(bs * n_head, c, Len_q, num_points_list[level])
-
-        sampling_value_list.append(sampling_value_l)
-
-    attn_weights = attention_weights.permute(0, 2, 1, 3).reshape(bs * n_head, 1, Len_q, sum(num_points_list))
-    weighted_sample_locs = torch.concat(sampling_value_list, dim=-1) * attn_weights
-    output = weighted_sample_locs.sum(-1).reshape(bs, n_head * c, Len_q)
-
-    return output.permute(0, 2, 1)
-
 
 class MSDeformableAttention(nn.Module):
     def __init__(
@@ -365,7 +289,7 @@ class DFineTransformerDecoder(nn.Module):
             up,
             eval_idx=-1,
             layer_scale=2,
-            act=nn.ReLU):
+            act=nn.ReLU()):
         super(DFineTransformerDecoder, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
@@ -377,6 +301,7 @@ class DFineTransformerDecoder(nn.Module):
             copy.deepcopy(decoder_layer) for _ in range(self.eval_idx + 1)] +
             [copy.deepcopy(decoder_layer_wide) for _ in range(num_layers - self.eval_idx - 1)])
         self.lqe_layers = nn.ModuleList([copy.deepcopy(LQE(4, 64, 2, reg_max, act=act)) for _ in range(num_layers)])
+        self.fixed_query_pos = False
 
     def value_op(self, memory, value_proj, value_scale, memory_mask, memory_spatial_shapes):
         """
@@ -424,14 +349,19 @@ class DFineTransformerDecoder(nn.Module):
             project = self.project
 
         ref_points_detach = F.sigmoid(ref_points_unact)
+        query_pos_fixed = query_pos_head(ref_points_detach).clamp(min=-10, max=10) if self.fixed_query_pos else None
 
         for i, layer in enumerate(self.layers):
             ref_points_input = ref_points_detach.unsqueeze(2)
-            query_pos_embed = query_pos_head(ref_points_detach).clamp(min=-10, max=10)
+            query_pos_embed = query_pos_fixed
+            if query_pos_embed is None:
+                query_pos_embed = query_pos_head(ref_points_detach).clamp(min=-10, max=10)
 
             # TODO Adjust scale if needed for detachable wider layers
             if i >= self.eval_idx + 1 and self.layer_scale > 1:
                 query_pos_embed = F.interpolate(query_pos_embed, scale_factor=self.layer_scale)
+                if self.fixed_query_pos:
+                    query_pos_fixed = query_pos_embed
                 value = self.value_op(memory, None, query_pos_embed.shape[-1], memory_mask, spatial_shapes)
                 output = F.interpolate(output, size=query_pos_embed.shape[-1])
                 output_detach = output.detach()
@@ -466,3 +396,119 @@ class DFineTransformerDecoder(nn.Module):
 
         return torch.stack(dec_out_bboxes), torch.stack(dec_out_logits), \
                torch.stack(dec_out_pred_corners), torch.stack(dec_out_refs), pre_bboxes, pre_scores
+
+
+class DEIMRMSNorm(nn.Module):
+    """RMSNorm used by DEIMv2 decoder layers."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        x_float = x.float()
+        normed = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+        return normed.type_as(x) * self.scale
+
+
+class DEIMSwiGLUFFN(nn.Module):
+    """SwiGLU FFN used by DEIMv2 decoder layers."""
+
+    def __init__(self, in_features: int, hidden_features: int, out_features: int, bias: bool = True) -> None:
+        super().__init__()
+        self.w12 = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        init.xavier_uniform_(self.w12.weight)
+        init.constant_(self.w12.bias, 0)
+        init.xavier_uniform_(self.w3.weight)
+        init.constant_(self.w3.bias, 0)
+
+    def forward(self, x):
+        x1, x2 = self.w12(x).chunk(2, dim=-1)
+        return self.w3(F.silu(x1) * x2)
+
+
+class DeimGate(nn.Module):
+    """DEIM gate with optional RMSNorm."""
+
+    def __init__(self, d_model: int, use_rmsnorm: bool = False):
+        super().__init__()
+        self.gate = nn.Linear(2 * d_model, 2 * d_model)
+        bias = bias_init_with_prob(0.5)
+        init.constant_(self.gate.bias, bias)
+        init.constant_(self.gate.weight, 0)
+        self.norm = DEIMRMSNorm(d_model) if use_rmsnorm else nn.LayerNorm(d_model)
+
+    def forward(self, x1, x2):
+        gate1, gate2 = torch.sigmoid(self.gate(torch.cat([x1, x2], dim=-1))).chunk(2, dim=-1)
+        return self.norm(gate1 * x1 + gate2 * x2)
+
+
+class DeimTransformerDecoderLayer(nn.Module):
+    """DEIMv2 decoder layer (RMSNorm + SwiGLU)."""
+
+    def __init__(
+        self,
+        d_model: int = 256,
+        n_heads: int = 8,
+        d_ffn: int = 1024,
+        dropout: float = 0.0,
+        act: nn.Module = nn.ReLU(),
+        n_levels: int = 4,
+        n_points: int = 4,
+        enable_cuda_acceleration: bool = False,
+        cross_attn_method: str = "default",
+        layer_scale=None,
+        use_gateway: bool = False,
+    ):
+        super().__init__()
+        del act, enable_cuda_acceleration
+        if layer_scale is not None:
+            d_ffn = round(layer_scale * d_ffn)
+            d_model = round(layer_scale * d_model)
+
+        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm1 = DEIMRMSNorm(d_model)
+
+        self.cross_attn = MSDeformableAttention(d_model, n_heads, n_levels, n_points, method=cross_attn_method)
+        self.dropout2 = nn.Dropout(dropout)
+        self.use_gateway = use_gateway
+        if use_gateway:
+            self.gateway = DeimGate(d_model, use_rmsnorm=True)
+        else:
+            self.norm2 = DEIMRMSNorm(d_model)
+
+        self.swish_ffn = DEIMSwiGLUFFN(d_model, d_ffn // 2, d_model)
+        self.dropout4 = nn.Dropout(dropout)
+        self.norm3 = DEIMRMSNorm(d_model)
+
+    @staticmethod
+    def with_pos_embed(tensor, pos):
+        return tensor if pos is None else tensor + pos
+
+    def forward(self, target, reference_points, value, spatial_shapes, attn_mask=None, query_pos_embed=None):
+        q = k = self.with_pos_embed(target, query_pos_embed)
+        target2, _ = self.self_attn(q, k, value=target, attn_mask=attn_mask)
+        target = self.norm1(target + self.dropout1(target2))
+
+        target2 = self.cross_attn(self.with_pos_embed(target, query_pos_embed), reference_points, value, spatial_shapes)
+        if self.use_gateway:
+            target = self.gateway(target, self.dropout2(target2))
+        else:
+            target = self.norm2(target + self.dropout2(target2))
+
+        target2 = self.swish_ffn(target)
+        return self.norm3((target + self.dropout4(target2)).clamp(min=-65504, max=65504))
+
+
+class DeimTransformerDecoder(DFineTransformerDecoder):
+    """DEIMv2 decoder wrapper using DFine forward path with fixed query-position embeddings."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fixed_query_pos = True

@@ -1,7 +1,18 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-from .model import RTDETR
+from .deim import RTDETRDEIMDataset, RTDETRDEIMTrainer, RTDETRDEIMTrainerV2, RTDETRDEIMValidator
+from .model import RTDETR, RTDETRDEIM, RTDETRDEIMv2
 from .predict import RTDETRPredictor
 from .val import RTDETRValidator
 
-__all__ = "RTDETR", "RTDETRPredictor", "RTDETRValidator"
+__all__ = (
+    "RTDETR",
+    "RTDETRDEIM",
+    "RTDETRDEIMv2",
+    "RTDETRPredictor",
+    "RTDETRValidator",
+    "RTDETRDEIMDataset",
+    "RTDETRDEIMValidator",
+    "RTDETRDEIMTrainer",
+    "RTDETRDEIMTrainerV2",
+)

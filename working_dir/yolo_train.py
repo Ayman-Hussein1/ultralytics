@@ -1,7 +1,27 @@
 import torch
 import argparse
-from ultralytics import RTDETR
+from ultralytics import RTDETR, YOLO
 import yaml
+
+MODEL_CLASSES = {
+    'RTDETR': RTDETR,
+}
+
+try:
+    from ultralytics import RTDETRDEIM
+except ImportError:
+    RTDETRDEIM = None
+else:
+    MODEL_CLASSES['RTDETRDEIM'] = RTDETRDEIM
+
+try:
+    from ultralytics import RTDETRDEIMv2
+except ImportError:
+    RTDETRDEIMv2 = None
+else:
+    MODEL_CLASSES['RTDETRDEIMv2'] = RTDETRDEIMv2
+
+MODEL_CLASSES['YOLO'] = YOLO
 
 
 def parse_args():
@@ -18,6 +38,13 @@ def parse_args():
         help='Path to model configuration YAML file'
     )
     parser.add_argument(
+        '--model-class',
+        type=str,
+        default='RTDETR',
+        choices=list(MODEL_CLASSES),
+        help=f"Model wrapper class to use. Available in this checkout: {', '.join(MODEL_CLASSES)}"
+    )
+    parser.add_argument(
         '--config',
         type=str,
         default='working_dir/rtdetr_train_config.yaml',
@@ -27,20 +54,13 @@ def parse_args():
     parser.add_argument(
         '--name',
         type=str,
-        default='rtdetr_res50_pretrained',
+        default='rtdetr_res50_train',
         help='Name for the training run'
     )
 
     parser.add_argument(
-        '--pretrained',
-        type=str,
-        default=None,
-        help='Path to pretrained weights file'
-    )
-
-    parser.add_argument(
         '--train', nargs='*', default=[], 
-        help='Additional Ultralytics train args, e.g. freeze=10 imgsz=1024')
+        help='Additional Ultralytics train args, e.g. freeze=10 imgsz=1024 pretrained=/path/to/weights.pt')
 
     return parser.parse_args()
 
@@ -60,7 +80,8 @@ def main():
     # Parse command line arguments
     args = parse_args()
 
-    print(f"\nModel: {args.model}")
+    print(f"\nModel class: {args.model_class}")
+    print(f"Model: {args.model}")
     print(f"Config: {args.config}")
 
     # Check available devices
@@ -70,10 +91,8 @@ def main():
         for i in range(torch.cuda.device_count()):
             print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
 
-    # Load RT-DETR model
-    model = RTDETR(args.model)
-    if args.pretrained:
-        model.load(args.pretrained)
+    # Load model with requested wrapper class
+    model = MODEL_CLASSES[args.model_class](args.model)
 
     for name, param in model.model.named_parameters():
         if not param.requires_grad:

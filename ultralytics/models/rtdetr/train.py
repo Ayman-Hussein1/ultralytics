@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from copy import copy
-import random
 import math
+import random
+from copy import copy
 
 from ultralytics.models.yolo.detect import DetectionTrainer
 from ultralytics.nn.tasks import RTDETRDetectionModel
-from ultralytics.utils import RANK, colorstr
+from ultralytics.utils import LOGGER, RANK, colorstr
+from ultralytics.utils.class_map import resolve_names
 from torch import nn, optim
-from ultralytics.utils import LOGGER
 from ultralytics.optim.muon import MuSGD
 import torch
 
@@ -47,6 +47,57 @@ class RTDETRTrainer(DetectionTrainer):
         - AMP training can lead to NaN outputs and may produce errors during bipartite graph matching.
     """
 
+    @staticmethod
+    def _pop_batch_flag(batch: dict, key: str) -> bool:
+        """Pop a boolean batch marker emitted by RT-DETR transforms."""
+        marker = batch.pop(key, None)
+        if isinstance(marker, torch.Tensor):
+            return bool(marker.view(-1)[0].item()) if marker.numel() else False
+        if isinstance(marker, (list, tuple)):
+            return bool(marker[0]) if marker else False
+        return bool(marker) if marker is not None else False
+
+    def _sample_multiscale_size(self) -> int:
+        """Sample multi-scale size using legacy range, with optional base-size repeat weighting."""
+        low = int(self.args.imgsz * (1.0 - self.args.multi_scale))
+        high = int(self.args.imgsz * (1.0 + self.args.multi_scale) + self.stride)
+        low = max((low // self.stride) * self.stride, int(self.stride))
+        high = (high // self.stride) * self.stride
+        if high <= low:
+            return low
+
+        base_size_repeat = int(getattr(self.args, "base_size_repeat", 0) or 0)
+        if base_size_repeat <= 0:
+            # Keep original Ultralytics behavior when repeat is not requested.
+            return random.randrange(low, high) // self.stride * self.stride
+
+        # Discrete scales in the same [low, high] range, plus repeated base size.
+        scales = list(range(low, high + 1, self.stride))
+        base = (int(self.args.imgsz) // self.stride) * self.stride
+        base = min(max(base, low), high)
+        scales.extend([base] * base_size_repeat)
+        return random.choice(scales)
+
+    def preprocess_batch(self, batch: dict) -> dict:
+        """Preprocess a batch and attach epoch for RT-DETR loss-side scheduling."""
+        already_scaled = self._pop_batch_flag(batch, "img_scaled")
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.to(self.device, non_blocking=self.device.type == "cuda")
+        batch["img"] = batch["img"].float()
+        if not already_scaled:
+            batch["img"] = batch["img"] / 255
+        if self.args.multi_scale > 0.0:
+            imgs = batch["img"]
+            sz = self._sample_multiscale_size()
+            sf = sz / max(imgs.shape[2:])
+            if sf != 1:
+                ns = [math.ceil(x * sf / self.stride) * self.stride for x in imgs.shape[2:]]
+                imgs = nn.functional.interpolate(imgs, size=ns, mode="bilinear", align_corners=False)
+            batch["img"] = imgs
+        batch["epoch"] = int(self.epoch)
+        return batch
+
     def get_model(self, cfg: dict | None = None, weights: str | None = None, verbose: bool = True):
         """Initialize and return an RT-DETR model for object detection tasks.
 
@@ -60,10 +111,15 @@ class RTDETRTrainer(DetectionTrainer):
         """
         model = RTDETRDetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
         if weights:
-            model.load(weights)
+            src_args = getattr(weights, "args", None)
+            src_data_yaml = src_args.get("data") if isinstance(src_args, dict) else getattr(src_args, "data", None)
+            src_names = resolve_names(getattr(weights, "names", None), src_data_yaml)
+            dst_names = resolve_names(self.data.get("names"), getattr(self.args, "data", None))
+            load_verbose = RANK in {-1, 0}
+            model.load(weights, verbose=load_verbose, src_names=src_names, dst_names=dst_names)
         freeze_bn = str(getattr(self.args, "freeze_bn", "none")).lower().replace("+", "_")
         if freeze_bn in {"backbone", "backbone_neck"}:
-            from ultralytics.nn.modules.utils import freeze_batch_norm2d
+            from ultralytics.nn.modules.utils import freeze_norm_layers
 
             nb = len(model.yaml["backbone"])
             freeze_to = nb
@@ -73,7 +129,7 @@ class RTDETRTrainer(DetectionTrainer):
                 freeze_to = nb + head_cut
 
             for i, m in enumerate(model.model[:freeze_to]):
-                frozen = freeze_batch_norm2d(m)
+                frozen = freeze_norm_layers(m)
                 if frozen is not m:
                     model.model[i] = frozen
         return model
@@ -104,39 +160,6 @@ class RTDETRTrainer(DetectionTrainer):
             fraction=self.args.fraction if mode == "train" else 1.0,
         )
 
-    def preprocess_batch(self, batch: dict) -> dict:
-        """Preprocess a batch of images by scaling and converting to float.
-
-        Args:
-            batch (dict): Dictionary containing batch data with 'img' tensor.
-
-        Returns:
-            (dict): Preprocessed batch with normalized images.
-        """
-        for k, v in batch.items():
-            if isinstance(v, torch.Tensor):
-                batch[k] = v.to(self.device, non_blocking=self.device.type == "cuda")
-        batch["img"] = batch["img"].float() / 255
-        if self.args.multi_scale > 0.0:
-            imgs = batch["img"]
-            multi_scale_range_low = 1 - self.args.multi_scale
-            multi_scale_range_high = 1 + self.args.multi_scale
-            sz = (
-                random.randrange(
-                    int(self.args.imgsz * multi_scale_range_low),
-                    int(self.args.imgsz * multi_scale_range_high + self.stride))
-                // self.stride
-                * self.stride
-            )  # size
-            sf = sz / max(imgs.shape[2:])  # scale factor
-            if sf != 1:
-                ns = [
-                    math.ceil(x * sf / self.stride) * self.stride for x in imgs.shape[2:]
-                ]  # new shape (stretched to gs-multiple)
-                imgs = nn.functional.interpolate(imgs, size=ns, mode="bilinear", align_corners=False)
-            batch["img"] = imgs
-        return batch
-
     def build_optimizer(self, model, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
         """Construct an optimizer for the given model.
 
@@ -154,6 +177,8 @@ class RTDETRTrainer(DetectionTrainer):
             (torch.optim.Optimizer): The constructed optimizer.
         """
         backbone_lr_ratio = self.args.backbone_lr_ratio
+        if backbone_lr_ratio <= 0:
+            raise ValueError(f"Invalid backbone_lr_ratio={backbone_lr_ratio}. Expected > 0.")
         g = [{}, {}, {}, {}, {}, {}, {}, {}]  # optimizer parameter groups, 8 groups for MuSGD support
         bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
         if name == "auto":
@@ -169,12 +194,23 @@ class RTDETRTrainer(DetectionTrainer):
 
         use_muon = name == "MuSGD"
         backbone_len = self.backbone_len
+        sta_exclusion_enabled = bool(getattr(self.args, "sta_exclusion", True))
+        sta_tokens = {
+            "sta",
+            "spm",
+            "spatialprior",
+            "spatialpriormodule",
+            "spatialpriormodulev2",
+            "spatial_prior",
+            "spatial_prior_module",
+        }
+        sta_excluded = 0
 
         for module_name, module in model.named_modules():
             for param_name, param in module.named_parameters(recurse=False):
                 fullname = f"{module_name}.{param_name}" if module_name else param_name
 
-                # Check if this is a backbone layer
+                # Check if this is a backbone layer; keep STA params at base LR.
                 is_backbone = False
                 parts = fullname.split(".")
 
@@ -182,9 +218,18 @@ class RTDETRTrainer(DetectionTrainer):
                 if parts[0] == "module":
                     parts = parts[1:]  # Remove "module" prefix for DDP
 
+                is_sta_param = any(p.lower() in sta_tokens for p in parts)
                 if len(parts) > 1 and parts[0] == "model" and parts[1].isdigit():
                     layer_idx = int(parts[1])
                     is_backbone = layer_idx < backbone_len
+                    if sta_exclusion_enabled and is_backbone and is_sta_param:
+                        # Match requested behavior: backbone_lr_ratio applies to backbone except STA branch.
+                        is_backbone = False
+                        sta_excluded += 1
+
+                is_norm_like_param = (
+                    isinstance(module, bn) or module.__class__.__name__ == "DEIMRMSNorm" or "logit_scale" in fullname
+                )
 
                 if is_backbone:
                     # Backbone parameters (groups 4, 5, 6, 7)
@@ -192,7 +237,7 @@ class RTDETRTrainer(DetectionTrainer):
                         g[7][fullname] = param  # backbone muon params
                     elif "bias" in fullname:
                         g[6][fullname] = param  # backbone bias
-                    elif isinstance(module, bn) or "logit_scale" in fullname:
+                    elif is_norm_like_param:
                         g[5][fullname] = param  # backbone bn weight
                     else:
                         g[4][fullname] = param  # backbone weight with decay (1D params)
@@ -202,7 +247,7 @@ class RTDETRTrainer(DetectionTrainer):
                         g[3][fullname] = param  # head muon params
                     elif "bias" in fullname:
                         g[2][fullname] = param  # head bias
-                    elif isinstance(module, bn) or "logit_scale" in fullname:
+                    elif is_norm_like_param:
                         g[1][fullname] = param  # head bn weight
                     else:
                         g[0][fullname] = param  # head weight with decay (1D params)
@@ -226,6 +271,11 @@ class RTDETRTrainer(DetectionTrainer):
             )
 
         backbone_lr = lr * backbone_lr_ratio
+        LOGGER.info(
+            f"{colorstr('optimizer:')} backbone low-LR uses backbone slice with "
+            f"sta_exclusion={sta_exclusion_enabled} ({sta_excluded} tensors excluded), "
+            f"backbone_lr_ratio={backbone_lr_ratio}"
+        )
 
         if name == "MuSGD":
             # MuSGD: 8 parameter groups with dict structure
@@ -286,5 +336,10 @@ class RTDETRTrainer(DetectionTrainer):
             loss_names.append("fgl_loss")
         if "ddf" in loss_gain:
             loss_names.append("ddf_loss")
+        # Add o2m loss names if one_to_many_groups > 0
+        # Handle DDP wrapper: use .module to get underlying model if wrapped
+        model = getattr(self.model, "module", self.model)
+        if getattr(model.model[-1], "one_to_many_groups", 0) > 0:
+            loss_names.extend(["giou_o2m", "cls_o2m", "l1_o2m"])
         self.loss_names = tuple(loss_names)
         return RTDETRValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))

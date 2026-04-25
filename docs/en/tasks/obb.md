@@ -32,9 +32,9 @@ The output of an oriented object detector is a set of rotated bounding boxes tha
 
 ## Visual Samples
 
-|                                              Ships Detection using OBB                                               |                                               Vehicle Detection using OBB                                                |
-| :------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: |
-| ![Ships Detection using OBB](https://github.com/ultralytics/docs/releases/download/0/ships-detection-using-obb.avif) | ![Vehicle Detection using OBB](https://github.com/ultralytics/docs/releases/download/0/vehicle-detection-using-obb.avif) |
+|                                               Ships Detection using OBB                                               |                                                Vehicle Detection using OBB                                                |
+| :-------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------: |
+| ![Ships Detection using OBB](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/ships-detection-using-obb.avif) | ![Vehicle Detection using OBB](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vehicle-detection-using-obb.avif) |
 
 ## [Models](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/models/26)
 
@@ -46,6 +46,7 @@ YOLO26 pretrained OBB models are shown here, which are pretrained on the [DOTAv1
 
 - **mAP<sup>test</sup>** values are for single-model multiscale on [DOTAv1](https://captain-whu.github.io/DOTA/index.html) dataset. <br>Reproduce by `yolo val obb data=DOTAv1.yaml device=0 split=test` and submit merged results to [DOTA evaluation](https://captain-whu.github.io/DOTA/evaluation.html).
 - **Speed** averaged over DOTAv1 val images using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. <br>Reproduce by `yolo val obb data=DOTAv1.yaml batch=1 device=0|cpu`
+- **Params** and **FLOPs** values are for the fused model after `model.fuse()`, which merges Conv and BatchNorm layers and, for end2end models, removes the auxiliary one-to-many detection head. Pretrained checkpoints retain the full training architecture and may show higher counts.
 
 ## Train
 
@@ -217,7 +218,7 @@ See full `export` details in the [Export](../modes/export.md) page.
 
 OBB detection with YOLO26 has numerous practical applications across various industries:
 
-- **Maritime and Port Management**: Detecting ships and vessels at various angles for [fleet management](https://www.ultralytics.com/blog/how-to-use-ultralytics-yolo26-for-obb-object-detection) and monitoring.
+- **Maritime and Port Management**: Detecting ships and vessels at various angles for [fleet management](https://www.ultralytics.com/blog/how-to-use-ultralytics-yolo11-for-obb-object-detection) and monitoring.
 - **Urban Planning**: Analyzing buildings and infrastructure from aerial imagery.
 - **Agriculture**: Monitoring crops and agricultural equipment from drone footage.
 - **Energy Sector**: Inspecting solar panels and wind turbines at different orientations.

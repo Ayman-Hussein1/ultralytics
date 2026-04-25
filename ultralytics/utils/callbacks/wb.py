@@ -1,8 +1,5 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-from datetime import datetime
-from pathlib import Path
-
 from ultralytics.utils import SETTINGS, TESTS_RUNNING
 from ultralytics.utils.torch_utils import model_info_for_loggers
 
@@ -19,7 +16,7 @@ except (ImportError, AssertionError):
 
 
 def _custom_table(x, y, classes, title="Precision Recall Curve", x_title="Recall", y_title="Precision"):
-    """Create and log a custom metric visualization to wandb.plot.pr_curve.
+    """Create and log a custom metric visualization table.
 
     This function crafts a custom metric visualization that mimics the behavior of the default wandb precision-recall
     curve while allowing for enhanced customization. The visual metric is useful for monitoring model performance across
@@ -130,26 +127,21 @@ def _log_plots(plots, step):
 
 def on_pretrain_routine_start(trainer):
     """Initialize and start wandb project if module is present."""
-    if trainer.args.project is None:
-        project_name = "Ultralytics"
-    else:
-        project_str = str(trainer.args.project)
-        project_arg = Path(project_str)
-        project_name = project_arg.name if project_arg.is_absolute() else project_str
-        project_name = project_name.replace("/", "-")
-
-    raw_name = str(trainer.args.name).replace("/", "-") if trainer.args.name else None
-    safe_name = str(raw_name).replace(" ", "_") if raw_name else None
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    wandb_id = f"{safe_name}_{timestamp}" if safe_name else None
-
     if not wb.run:
+        from datetime import datetime
+        from pathlib import Path
+
+        name = str(trainer.args.name).replace("/", "-").replace(" ", "_")
+        latest_run = Path(trainer.save_dir) / "wandb" / "latest-run"
+        resuming = trainer.args.resume and latest_run.exists()
         wb.init(
-            project=project_name,
-            name=raw_name,
+            project=str(trainer.args.project).replace("/", "-") if trainer.args.project else "Ultralytics",
+            name=name,
             config=vars(trainer.args),
-            id=wandb_id,
+            id=latest_run.resolve().name.split("-", 2)[2]
+            if resuming
+            else f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            resume="allow" if resuming else None,
             dir=str(trainer.save_dir),
         )
 
