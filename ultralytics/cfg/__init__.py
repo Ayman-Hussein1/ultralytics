@@ -519,7 +519,7 @@ def check_dict_alignment(
             # ``wd_end``: half-cosine target weight_decay (callbacks/wd_schedule.py); reference
             #   DINOv3 distillation_convnext/convnext_tiny_p16.yaml schedules.weight_decay.
             # ``grayscale`` / ``gaussian_blur`` / ``solarize``: DINOv3 DataAugmentationDINO photometric
-            #   stack ports (ultralytics/data/augment.py:classify_augmentations docstring for refs).
+            #   stack ports (callbacks/distill_aug.py:classify_augmentations_distill docstring for refs).
             "wd_end",
             "grayscale",
             "gaussian_blur",
