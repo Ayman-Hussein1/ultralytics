@@ -68,6 +68,7 @@ class SemanticTrainer(BaseTrainer):
             batch_size=batch,
             stride=max(int(self.model.stride.max() if hasattr(self.model, "stride") else 32), 32),
             prefix=f"{mode}: ",
+            pad=0,
         )
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
