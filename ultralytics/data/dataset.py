@@ -740,6 +740,8 @@ class ClassificationDataset:
         self.samples = [[*list(x), Path(x[0]).with_suffix(".npy"), None] for x in self.samples]  # file, index, npy, im
         self.imgsz = args.imgsz
         self.img_cache = None
+        self.img_offsets = None
+        self.img_shapes = None
         if self.cache_ram and not self.check_cache_ram():
             self.cache_ram = False
         if self.cache_ram:
@@ -772,7 +774,9 @@ class ClassificationDataset:
         """
         f, j, fn, im = self.samples[i]  # filename, index, filename.with_suffix('.npy'), image
         if self.cache_ram:
-            im = self.img_cache[i].numpy()  # HWC uint8 view into shared tensor
+            pos = self.img_offsets[i]
+            h, w, c = self.img_shapes[i]
+            im = self.img_cache[pos : pos + h * w * c].numpy().reshape(h, w, c)  # zero-copy view
         elif self.cache_disk:
             if not fn.exists():  # load npy
                 np.save(fn.as_posix(), cv2.imread(f), allow_pickle=False)
@@ -797,13 +801,15 @@ class ClassificationDataset:
         Returns:
             (bool): True if there's enough RAM, False otherwise.
         """
+        if not self.samples:
+            return False
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(len(self.samples), 30)  # extrapolate from 30 random images
         for _ in range(n):
             im = cv2.imread(random.choice(self.samples)[0])
             if im is None:
                 continue
-            b += self.imgsz * self.imgsz * im.shape[2]  # post-resize footprint
+            b += im.nbytes
         mem_required = b * len(self.samples) / n * (1 + safety_margin)  # bytes required to cache dataset into RAM
         mem = __import__("psutil").virtual_memory()
         if mem_required > mem.available:
@@ -816,23 +822,39 @@ class ClassificationDataset:
         return True
 
     def cache_images(self) -> None:
-        """Preload all images into a shared-memory uint8 tensor before DataLoader workers spawn."""
+        """Preload all images into a single shared-memory uint8 buffer with per-image offsets.
+
+        Original sizes are preserved so torch_transforms (RandomResizedCrop, validation Resize+CenterCrop)
+        receive the same input as the uncached path.
+        """
         n = len(self.samples)
         gb = 1 << 30
-        self.img_cache = torch.empty((n, self.imgsz, self.imgsz, 3), dtype=torch.uint8)
+        images = [None] * n
 
         def load_one(i: int):
-            im = cv2.imread(self.samples[i][0])
-            if im.shape[:2] != (self.imgsz, self.imgsz):
-                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
-            return i, im
+            return i, cv2.imread(self.samples[i][0])
 
+        total = 0
         with ThreadPool(NUM_THREADS) as pool:
             pbar = TQDM(pool.imap(load_one, range(n)), total=n, disable=LOCAL_RANK > 0)
             for i, im in pbar:
-                self.img_cache[i] = torch.from_numpy(im)
-                pbar.desc = f"{self.prefix}Caching images ({self.img_cache.numel() / gb:.1f}GB RAM)"
+                images[i] = im
+                total += im.nbytes
+                pbar.desc = f"{self.prefix}Caching images ({total / gb:.1f}GB RAM)"
             pbar.close()
+
+        self.img_cache = torch.empty(total, dtype=torch.uint8)
+        self.img_offsets = [0] * n
+        self.img_shapes = [None] * n
+        pos = 0
+        for i in range(n):
+            im = images[i]
+            sz = im.nbytes
+            self.img_cache[pos : pos + sz] = torch.from_numpy(im.reshape(-1))
+            self.img_offsets[i] = pos
+            self.img_shapes[i] = im.shape
+            pos += sz
+            images[i] = None  # free original numpy array
         self.img_cache.share_memory_()
 
     def verify_images(self) -> list[tuple]:
