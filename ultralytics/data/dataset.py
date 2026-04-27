@@ -742,7 +742,9 @@ class ClassificationDataset:
         self.img_cache = None
         self.img_offsets = None
         self.img_shapes = None
-        if self.cache_ram and not self.check_cache_ram():
+        # safety_margin=1.0 budgets ~2x cache size to accommodate streaming overhead (heap fragmentation
+        # from per-image cv2 decode allocations is not promptly returned to the OS by some allocators).
+        if self.cache_ram and not self.check_cache_ram(safety_margin=1.0):
             self.cache_ram = False
         if self.cache_ram:
             self.cache_images()
@@ -825,37 +827,61 @@ class ClassificationDataset:
         """Preload all images into a single shared-memory uint8 buffer with per-image offsets.
 
         Original sizes are preserved so torch_transforms (RandomResizedCrop, validation Resize+CenterCrop)
-        receive the same input as the uncached path.
+        receive the same input as the uncached path. A two-pass design records sizes via PIL header reads
+        first, then streams each decoded image directly into the destination buffer to avoid holding the
+        full set of decoded arrays in memory simultaneously.
         """
         n = len(self.samples)
         gb = 1 << 30
-        images = [None] * n
 
-        def load_one(i: int):
+        def probe(i: int):
+            with Image.open(self.samples[i][0]) as img:
+                w, h = img.size
+            return i, (h, w, 3)  # cv2.imread returns BGR (3 channels) regardless of source format
+
+        def load(i: int):
             return i, cv2.imread(self.samples[i][0])
 
-        total = 0
-        with ThreadPool(NUM_THREADS) as pool:
-            pbar = TQDM(pool.imap(load_one, range(n)), total=n, disable=LOCAL_RANK > 0)
-            for i, im in pbar:
-                images[i] = im
-                total += im.nbytes
-                pbar.desc = f"{self.prefix}Caching images ({total / gb:.1f}GB RAM)"
-            pbar.close()
+        try:
+            # Pass 1: read image headers only (no decode) to record (h, w, c) and total bytes.
+            shapes = [None] * n
+            with ThreadPool(NUM_THREADS) as pool:
+                pbar = TQDM(pool.imap(probe, range(n)), total=n, disable=LOCAL_RANK > 0)
+                for i, shape in pbar:
+                    shapes[i] = shape
+                    pbar.desc = f"{self.prefix}Probing image sizes"
+                pbar.close()
 
-        self.img_cache = torch.empty(total, dtype=torch.uint8)
-        self.img_offsets = [0] * n
-        self.img_shapes = [None] * n
-        pos = 0
-        for i in range(n):
-            im = images[i]
-            sz = im.nbytes
-            self.img_cache[pos : pos + sz] = torch.from_numpy(im.reshape(-1))
-            self.img_offsets[i] = pos
-            self.img_shapes[i] = im.shape
-            pos += sz
-            images[i] = None  # free original numpy array
-        self.img_cache.share_memory_()
+            offsets = [0] * n
+            pos = 0
+            for i, (h, w, c) in enumerate(shapes):
+                offsets[i] = pos
+                pos += h * w * c
+            total = pos
+
+            # Pass 2: decode and stream each image into the destination buffer.
+            cache = torch.empty(total, dtype=torch.uint8)
+            with ThreadPool(NUM_THREADS) as pool:
+                pbar = TQDM(pool.imap(load, range(n)), total=n, disable=LOCAL_RANK > 0)
+                for i, im in pbar:
+                    sz = im.nbytes
+                    cache[offsets[i] : offsets[i] + sz] = torch.from_numpy(im.reshape(-1))
+                    pbar.desc = f"{self.prefix}Caching images ({(offsets[i] + sz) / gb:.1f}GB RAM)"
+                pbar.close()
+
+            cache.share_memory_()
+        except (MemoryError, OSError, RuntimeError) as e:
+            LOGGER.warning(
+                f"{self.prefix}cache_ram failed ({type(e).__name__}: {e}); falling back to disk reads. "
+                f"On Linux/Docker this is typically /dev/shm being smaller than RAM — run with "
+                f"`--shm-size=<size>` or set `cache=False`."
+            )
+            self.cache_ram = False
+            return
+
+        self.img_cache = cache
+        self.img_offsets = offsets
+        self.img_shapes = shapes
 
     def verify_images(self) -> list[tuple]:
         """Verify all images in dataset.
