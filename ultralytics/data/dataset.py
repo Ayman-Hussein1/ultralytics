@@ -734,15 +734,15 @@ class ClassificationDataset:
             self.samples = self.samples[: round(len(self.samples) * args.fraction)]
         self.prefix = colorstr(f"{prefix}: ") if prefix else ""
         self.cache_ram = args.cache is True or str(args.cache).lower() == "ram"  # cache images into RAM
-        if self.cache_ram:
-            LOGGER.warning(
-                "Classification `cache_ram` training has known memory leak in "
-                "https://github.com/ultralytics/ultralytics/issues/9824, setting `cache_ram=False`."
-            )
-            self.cache_ram = False
         self.cache_disk = str(args.cache).lower() == "disk"  # cache images on hard drive as uncompressed *.npy files
         self.samples = self.verify_images()  # filter out bad images
         self.samples = [[*list(x), Path(x[0]).with_suffix(".npy"), None] for x in self.samples]  # file, index, npy, im
+        self.imgsz = args.imgsz
+        self.img_cache = None
+        if self.cache_ram and not self._check_cache_ram(safety_margin=0.5):
+            self.cache_ram = False
+        if self.cache_ram:
+            self._preload_ram()
         scale = (1.0 - args.scale, 1.0)  # (0.08, 1.0)
         self.torch_transforms = (
             classify_augmentations(
@@ -771,8 +771,7 @@ class ClassificationDataset:
         """
         f, j, fn, im = self.samples[i]  # filename, index, filename.with_suffix('.npy'), image
         if self.cache_ram:
-            if im is None:  # Warning: two separate if statements required here, do not combine this with previous line
-                im = self.samples[i][3] = cv2.imread(f)
+            im = self.img_cache[i].numpy()  # HWC uint8 view into shared tensor
         elif self.cache_disk:
             if not fn.exists():  # load npy
                 np.save(fn.as_posix(), cv2.imread(f), allow_pickle=False)
@@ -787,6 +786,54 @@ class ClassificationDataset:
     def __len__(self) -> int:
         """Return the total number of samples in the dataset."""
         return len(self.samples)
+
+    def _check_cache_ram(self, safety_margin: float = 0.5) -> bool:
+        """Estimate RAM needed to cache the dataset and check it fits in available memory."""
+        import random
+
+        import psutil
+
+        b, gb = 0, 1 << 30
+        n = min(len(self.samples), 30)
+        for _ in range(n):
+            im = cv2.imread(random.choice(self.samples)[0])
+            if im is None:
+                continue
+            b += self.imgsz * self.imgsz * im.shape[2]  # post-resize footprint
+        mem_required = b * len(self.samples) / n * (1 + safety_margin)
+        mem = psutil.virtual_memory()
+        if mem_required > mem.available:
+            LOGGER.warning(
+                f"{self.prefix}{mem_required / gb:.1f}GB RAM required to cache images "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching images"
+            )
+            return False
+        return True
+
+    def _preload_ram(self) -> None:
+        """Preload all images into a shared-memory torch.uint8 tensor (HWC) once, before workers spawn.
+
+        Fixes https://github.com/ultralytics/ultralytics/issues/9824 — replaces the legacy lazy
+        write-back that triggered per-worker copy-on-write on fork and full-pickle bloat on spawn.
+        """
+        n = len(self.samples)
+        gb = 1 << 30
+        self.img_cache = torch.empty((n, self.imgsz, self.imgsz, 3), dtype=torch.uint8)
+
+        def _load_one(i: int):
+            im = cv2.imread(self.samples[i][0])
+            if im.shape[:2] != (self.imgsz, self.imgsz):
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+            return i, im
+
+        with ThreadPool(NUM_THREADS) as pool:
+            pbar = TQDM(pool.imap(_load_one, range(n)), total=n, disable=LOCAL_RANK > 0)
+            for i, im in pbar:
+                self.img_cache[i] = torch.from_numpy(im)
+                pbar.desc = f"{self.prefix}Caching images ({self.img_cache.numel() / gb:.1f}GB RAM)"
+            pbar.close()
+        self.img_cache.share_memory_()
 
     def verify_images(self) -> list[tuple]:
         """Verify all images in dataset.
