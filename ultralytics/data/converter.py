@@ -910,7 +910,8 @@ async def convert_ndjson_to_yolo(ndjson_path: str | Path, output_path: str | Pat
     _reuse = dataset_dir.exists()
     if _reuse:
         yaml_path.unlink(missing_ok=True)  # Invalidate hash before destructive ops (crash safety)
-        if not is_classification:
+        if not is_classification and not local_mode:
+            LOGGER.warning(f"WARNING ⚠️ Removing existing labels at {dataset_dir / 'labels'} to rewrite from NDJSON.")
             shutil.rmtree(dataset_dir / "labels", ignore_errors=True)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     data_yaml = None
@@ -924,7 +925,9 @@ async def convert_ndjson_to_yolo(ndjson_path: str | Path, output_path: str | Pat
             data_yaml["nc"] = inferred_nc
         data_yaml.pop("class_names", None)
         data_yaml.pop("type", None)  # Remove NDJSON-specific fields
-        if not local_mode:
+        if local_mode:
+            data_yaml["path"] = str(dataset_dir)  # normalize raw/relative input to resolved dataset_dir
+        else:
             data_yaml.pop("path", None)  # YAML must resolve relative to dataset_dir, not user-supplied path
         for split in sorted(splits):
             if not local_mode:
@@ -1020,6 +1023,14 @@ async def convert_ndjson_to_yolo(ndjson_path: str | Path, output_path: str | Pat
         raise RuntimeError(f"Failed to download any images from {ndjson_path}. Check network connection and URLs.")
     if success_count < len(image_records):
         LOGGER.warning(f"Downloaded {success_count}/{len(image_records)} images from {ndjson_path}")
+
+    # Local mode: prune stale label .txt files only (caller owns image tree, untouched).
+    if _reuse and local_mode:
+        expected = {dataset_dir / "labels" / r["split"] / f"{Path(r['file']).stem}.txt" for r in image_records}
+        for split in splits:
+            for p in (dataset_dir / "labels" / split).glob("*.txt"):
+                if p not in expected:
+                    p.unlink()
 
     # Remove orphaned images no longer in the dataset (prevents stale background images in training)
     if _reuse and not local_mode:
