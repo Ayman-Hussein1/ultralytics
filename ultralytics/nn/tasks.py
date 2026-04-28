@@ -616,16 +616,28 @@ class SemanticSegmentationModel(BaseModel):
         self.names = {i: f"{i}" for i in range(self.yaml["nc"])}
         self.inplace = self.yaml.get("inplace", True)
 
-        # Build strides — SemanticSegment outputs at stride 8 during training
+        # Build strides — track smallest spatial size across all layers to find the deepest
+        # backbone stride (e.g. P5/32). Head input alone is insufficient: the FPN upsamples
+        # P5 away before the head, but the encoder still requires inputs aligned to that
+        # deepest stride or FPN concats fail on rounding mismatches.
         m = self.model[-1]
         if isinstance(m, SemanticSegment):
             s = 256
             self.model.eval()
             m.training = True  # get training output (stride-4)
-            out = self.forward(torch.zeros(1, ch, s, s))
-            if isinstance(out, tuple):
-                out = out[0]  # main logits (aux head returns tuple during training)
-            m.stride = torch.tensor([s / out.shape[-1]])  # e.g., 256/32 = 8
+            min_h = [s]
+
+            def _record(_m, _inp, out, _h=min_h):
+                if isinstance(out, torch.Tensor) and out.ndim == 4:
+                    _h[0] = min(_h[0], out.shape[-2])
+
+            hooks = [layer.register_forward_hook(_record) for layer in self.model]
+            try:
+                self.forward(torch.zeros(1, ch, s, s))
+            finally:
+                for h in hooks:
+                    h.remove()
+            m.stride = torch.tensor([s / min_h[0]], dtype=torch.float32)  # e.g., 256/8 = 32
             self.stride = m.stride
             self.model.train()
         else:

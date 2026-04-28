@@ -6,7 +6,6 @@ import math
 
 import cv2
 import numpy as np
-import torch
 
 from ultralytics.data.augment import LetterBox
 from ultralytics.engine.predictor import BasePredictor
@@ -43,6 +42,12 @@ class SemanticSegmentationPredictor(BasePredictor):
         imgsz = self.imgsz[0] if isinstance(self.imgsz, (list, tuple)) else self.imgsz
         stride_t = self.model.stride
         stride = int(stride_t.max() if hasattr(stride_t, "max") else stride_t)
+
+        # Static-shape backend (e.g. OpenVINO/TensorRT exported with dynamic=False):
+        # model input is fixed to (imgsz, imgsz); fall back to square letterbox.
+        if getattr(self.model, "dynamic", True) is False:
+            letterbox = LetterBox(new_shape=(imgsz, imgsz), auto=False, scaleup=False, stride=stride)
+            return [letterbox(image=x) for x in im]
 
         scaled = []
         for x in im:
