@@ -78,7 +78,7 @@ TASK2MODEL = {
     "classify": "yolo26n-cls.pt",
     "pose": "yolo26n-pose.pt",
     "obb": "yolo26n-obb.pt",
-    "semseg": "yolo26n-semseg.yaml",
+    "semseg": "yolo26n-semseg.pt",
 }
 TASK2METRIC = {
     "detect": "metrics/mAP50-95(B)",
