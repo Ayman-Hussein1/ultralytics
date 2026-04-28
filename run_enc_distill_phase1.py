@@ -164,6 +164,17 @@ def main(argv: list[str]) -> None:
                     f"Refusing resume: --{key} mismatch (ckpt={prev!r} vs cli={now!r}). "
                     f"Either drop the flag or start a fresh run."
                 )
+        # Device guard: check_resume's whitelist behavior is version-brittle; bake device into
+        # the checkpoint explicitly to avoid silent CLI vs ckpt mismatches on resume.
+        prev_device = str(resume_args.get("device", "0"))
+        if str(gpu) != prev_device:
+            raise ValueError(
+                f"Refusing resume: device mismatch (ckpt={prev_device!r} vs cli={gpu!r}). "
+                f"To resume on different GPUs, bake the new device into the checkpoint first:\n"
+                f"  python -c \"from callbacks.paths import patch_resume; "
+                f"patch_resume('{resume}', device='{gpu}')\"\n"
+                f"Then re-run with the same --resume path."
+            )
 
     world_size = len(gpu.split(",")) if "," in gpu else 1
     global_batch = (
