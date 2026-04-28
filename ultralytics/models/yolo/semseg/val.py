@@ -174,10 +174,11 @@ class SemanticValidator(BaseValidator):
         pf = "%22s" + "%11.4f" * 2  # print format
         LOGGER.info(pf % ("all", self.metrics.miou, self.metrics.pixel_accuracy))
         # Per-class IoU
-        per_class = self.metrics.per_class_iou
-        for i, name in self.names.items():
-            if i < len(per_class):
-                LOGGER.info(f"  {name}: IoU={per_class[i]:.4f}")
+        if self.args.verbose and not self.training and self.nc > 1:
+            per_class = self.metrics.per_class_iou
+            for i, name in self.names.items():
+                if i < len(per_class):
+                    LOGGER.info(f"  {name}: IoU={per_class[i]:.4f}")
         if self.args.save_mask and self.results_dir is not None:
             LOGGER.info(f"Semantic prediction masks saved to {self.results_dir}")
 
