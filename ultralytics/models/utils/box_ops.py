@@ -52,11 +52,14 @@ def _upcast_boxes(boxes: torch.Tensor) -> torch.Tensor:
 
 
 def _aligned_inter_union(
-    boxes1: torch.Tensor, boxes2: torch.Tensor
+    boxes1: torch.Tensor, boxes2: torch.Tensor, xywh: bool = False
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute aligned intersection and union, returning upcast boxes for follow-up geometry."""
     boxes1 = _upcast_boxes(boxes1)
     boxes2 = _upcast_boxes(boxes2)
+    if xywh:
+        boxes1 = box_cxcywh_to_xyxy(boxes1)
+        boxes2 = box_cxcywh_to_xyxy(boxes2)
 
     inter_lt = torch.max(boxes1[:, :2], boxes2[:, :2])
     inter_rb = torch.min(boxes1[:, 2:], boxes2[:, 2:])
@@ -66,15 +69,19 @@ def _aligned_inter_union(
     return inter, union, boxes1, boxes2
 
 
-def aligned_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
-    """Compute element-wise IoU for N matched xyxy box pairs, returning vector of shape (N,)."""
-    inter, union, _, _ = _aligned_inter_union(boxes1, boxes2)
+def aligned_box_iou(
+    boxes1: torch.Tensor, boxes2: torch.Tensor, eps: float = 1e-7, xywh: bool = False
+) -> torch.Tensor:
+    """Compute element-wise IoU for N matched box pairs, returning vector of shape (N,)."""
+    inter, union, _, _ = _aligned_inter_union(boxes1, boxes2, xywh=xywh)
     return inter / union.clamp(min=eps)
 
 
-def aligned_giou(boxes1: torch.Tensor, boxes2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
-    """Compute element-wise Generalized IoU for N matched xyxy box pairs, returning vector of shape (N,)."""
-    inter, union, boxes1, boxes2 = _aligned_inter_union(boxes1, boxes2)
+def aligned_giou(
+    boxes1: torch.Tensor, boxes2: torch.Tensor, eps: float = 1e-7, xywh: bool = False
+) -> torch.Tensor:
+    """Compute element-wise Generalized IoU for N matched box pairs, returning vector of shape (N,)."""
+    inter, union, boxes1, boxes2 = _aligned_inter_union(boxes1, boxes2, xywh=xywh)
     iou = inter / union.clamp(min=eps)
 
     cover_lt = torch.min(boxes1[:, :2], boxes2[:, :2])

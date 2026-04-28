@@ -213,9 +213,7 @@ class DfineLoss(nn.Module):
             return {name_bbox: zero, name_giou: zero}
 
         loss_bbox = self.loss_gain["bbox"] * F.l1_loss(pred_bboxes, gt_bboxes, reduction="sum") / norm_boxes
-        pred_bboxes_xyxy = box_cxcywh_to_xyxy(pred_bboxes)
-        gt_bboxes_xyxy = box_cxcywh_to_xyxy(gt_bboxes)
-        loss_giou = 1.0 - aligned_giou(pred_bboxes_xyxy, gt_bboxes_xyxy)
+        loss_giou = 1.0 - aligned_giou(pred_bboxes, gt_bboxes, xywh=True)
         loss_giou = self.loss_gain["giou"] * (loss_giou.sum() / norm_boxes)
         return {name_bbox: loss_bbox.squeeze(), name_giou: loss_giou.squeeze()}
 
@@ -241,7 +239,7 @@ class DfineLoss(nn.Module):
             pred_assigned_cls = pred_bboxes[(cls_batch_idx, cls_src_idx)]
             gt_assigned_cls = gt_bboxes[cls_gt_idx]
             gt_scores[(cls_batch_idx, cls_src_idx)] = aligned_box_iou(
-                box_cxcywh_to_xyxy(pred_assigned_cls.detach()), box_cxcywh_to_xyxy(gt_assigned_cls)
+                pred_assigned_cls.detach(), gt_assigned_cls, xywh=True
             )
 
         (box_batch_idx, box_src_idx), box_gt_idx = self._get_index(box_indices, pred_scores.device)
@@ -389,7 +387,7 @@ class DfineLoss(nn.Module):
         target_corners, weight_right, weight_left = target_cache
         pred_corners_sel = pred_corners[idx].reshape(-1, self.reg_max + 1)
 
-        ious = aligned_box_iou(box_cxcywh_to_xyxy(pred_bboxes[idx]), box_cxcywh_to_xyxy(target_boxes))
+        ious = aligned_box_iou(pred_bboxes[idx], target_boxes, xywh=True)
         weight_targets = ious.unsqueeze(-1).repeat(1, 4).reshape(-1).detach()
         loss_fgl = self._unimodal_distribution_focal_loss(
             pred_corners_sel,

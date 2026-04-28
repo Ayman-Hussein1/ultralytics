@@ -12,8 +12,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.utils.loss import FocalLoss, MALoss, VarifocalLoss
-from ultralytics.utils.metrics import bbox_iou
 
+from .box_ops import aligned_box_iou, aligned_giou
 from .ops import HungarianMatcher
 
 
@@ -187,7 +187,7 @@ class DETRLoss(nn.Module):
             return loss
 
         loss[name_bbox] = self.loss_gain["bbox"] * F.l1_loss(pred_bboxes, gt_bboxes, reduction="sum") / global_num_gts
-        loss[name_giou] = 1.0 - bbox_iou(pred_bboxes, gt_bboxes, xywh=True, GIoU=True)
+        loss[name_giou] = 1.0 - aligned_giou(pred_bboxes, gt_bboxes, xywh=True)
         loss[name_giou] = loss[name_giou].sum() / global_num_gts
         loss[name_giou] = self.loss_gain["giou"] * loss[name_giou]
         return {k: v.squeeze() for k, v in loss.items()}
@@ -385,7 +385,7 @@ class DETRLoss(nn.Module):
 
         gt_scores = torch.zeros([bs, nq], device=pred_scores.device)
         if len(gt_bboxes):
-            gt_scores[idx] = bbox_iou(pred_bboxes.detach(), gt_bboxes, xywh=True).squeeze(-1)
+            gt_scores[idx] = aligned_box_iou(pred_bboxes.detach(), gt_bboxes, xywh=True)
 
         return {
             **self._get_loss_class(pred_scores, targets, gt_scores, len(gt_bboxes), global_num_gts, postfix),
