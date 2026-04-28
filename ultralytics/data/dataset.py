@@ -1096,11 +1096,10 @@ class SemsegDataset(BaseDataset):
         transforms = []
         nc = self.data.get("nc", len(self.data.get("names", [])))
         if self.augment:
-            crop_size = self.data.get("crop_size", 512)
             transforms.append(SemsegRandomScale(scale_min=0.5, scale_max=2.0))
-            transforms.append(SemsegRandomCrop(crop_size=crop_size, ignore_label=255 if nc > 1 else 0))
+            transforms.append(SemsegRandomCrop(crop_size=int(self.imgsz), ignore_label=255 if nc > 1 else 0))
             transforms.append(RandomFlip(p=0.5, direction="horizontal"))
-            transforms.append(PhotoMetricDistortion(        
+            transforms.append(PhotoMetricDistortion(
                 brightness_delta=12,
                 contrast_range=(0.85, 1.15),
                 saturation_range=(0.85, 1.15),
