@@ -1281,7 +1281,7 @@ class SemanticSegmentationLoss(nn.Module):
             self.ce = nn.BCEWithLogitsLoss()
         else:
             self.ce = nn.CrossEntropyLoss(
-                ignore_index=255, weight=torch.from_numoy(CITYSCAPES_WEIGHT) if self.use_cityscapes_weight else None
+                ignore_index=255, weight=torch.from_numpy(CITYSCAPES_WEIGHT) if self.use_cityscapes_weight else None
             ).to(device=self.device, dtype=self.dtype)
 
     def _resize_masks(self, masks, target_shape):
