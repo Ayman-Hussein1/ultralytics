@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import glob
+import inspect
 import math
 import os
 import random
@@ -136,10 +137,14 @@ class BaseDataset(Dataset):
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
-        # Shared RAM cache: single torch.uint8 buffer pinned via share_memory_() before workers fork
+        # Shared RAM cache: single torch.uint8 buffer pinned via share_memory_() before workers fork.
+        # Cache is built using the subclass's load_image rect_mode default (e.g. RTDETRDataset overrides to False
+        # for square resize). The fast path serves only callers requesting that same mode; others fall through
+        # to decode so cache shape always matches the requested resize.
         self.img_cache = None
         self.img_offsets = None
         self.img_shapes = None
+        self._cache_rect_mode = inspect.signature(self.load_image).parameters["rect_mode"].default
         # safety_margin=1.0 budgets ~2x cache size to absorb streaming/heap-fragmentation overhead
         if self.cache == "ram" and self.check_cache_ram(safety_margin=1.0):
             if hyp.deterministic:
@@ -229,11 +234,11 @@ class BaseDataset(Dataset):
         Raises:
             FileNotFoundError: If the image file is not found.
         """
-        # Shared RAM cache fast path: workers map the same SHM region. Gated on rect_mode=True because the cache
-        # stores aspect-ratio-preserving resizes; rect_mode=False (e.g. RTDETRDataset) wants a square resize and must
-        # fall through to the decode path. .copy() prevents in-place augmentations (e.g. RandomHSV cv2.cvtColor with
-        # dst=img) from mutating the shared backing tensor and corrupting the cache for other workers.
-        if rect_mode and self.cache == "ram" and self.img_cache is not None:
+        # Shared RAM cache fast path: workers map the same SHM region. The cache is built using the subclass's
+        # load_image rect_mode default; only callers requesting that same mode hit the fast path, others fall
+        # through to decode. .copy() prevents in-place augmentations (e.g. RandomHSV cv2.cvtColor with dst=img)
+        # from mutating the shared backing tensor and corrupting the cache for other workers.
+        if rect_mode == self._cache_rect_mode and self.cache == "ram" and self.img_cache is not None:
             offset = self.img_offsets[i]
             h, w, c = self.img_shapes[i]
             im = self.img_cache[offset : offset + h * w * c].numpy().reshape(h, w, c).copy()
@@ -299,14 +304,22 @@ class BaseDataset(Dataset):
         n = self.ni
 
         def probe(i: int):
-            with Image.open(self.im_files[i]) as img:
-                w0, h0 = img.size
-            r = self.imgsz / max(h0, w0)
-            if r != 1:
-                w = min(math.ceil(w0 * r), self.imgsz)
-                h = min(math.ceil(h0 * r), self.imgsz)
+            # Re-raise PIL header read failures as FileNotFoundError so the outer handler propagates them
+            # cleanly instead of swallowing into the generic OSError/SHM warning.
+            try:
+                with Image.open(self.im_files[i]) as img:
+                    w0, h0 = img.size
+            except OSError as e:
+                raise FileNotFoundError(f"Image Not Found {self.im_files[i]} ({type(e).__name__}: {e})") from e
+            if self._cache_rect_mode:
+                r = self.imgsz / max(h0, w0)
+                if r != 1:
+                    w = min(math.ceil(w0 * r), self.imgsz)
+                    h = min(math.ceil(h0 * r), self.imgsz)
+                else:
+                    w, h = w0, h0
             else:
-                w, h = w0, h0
+                w, h = self.imgsz, self.imgsz
             return i, (h0, w0), (h, w, self.channels)
 
         def load(i: int):
@@ -314,10 +327,13 @@ class BaseDataset(Dataset):
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {self.im_files[i]}")
             h0, w0 = im.shape[:2]
-            r = self.imgsz / max(h0, w0)
-            if r != 1:
-                w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
-                im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            if self._cache_rect_mode:
+                r = self.imgsz / max(h0, w0)
+                if r != 1:
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            elif not (h0 == w0 == self.imgsz):
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
             if im.ndim == 2:
                 im = im[..., None]
             return i, im
