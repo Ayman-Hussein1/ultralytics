@@ -17,9 +17,15 @@ The output of a semantic segmentation model is a single H x W class map where ea
 
     YOLO26 Semantic Segmentation models use the `-semseg` suffix, i.e., `yolo26n-semseg.pt`, and are pretrained on [Cityscapes](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/cityscapes.yaml).
 
+[Models](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/models) download automatically from the latest Ultralytics [release](https://github.com/ultralytics/assets/releases) on first use.
+
+- **mIoU<sup>val</sup>** values are for single-model single-scale on [Cityscapes](https://www.cityscapes-dataset.com/) dataset. <br>Reproduce by `yolo val semseg data=cityscapes.yaml device=0`
+- **Speed** averaged over cityscapes val images using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. <br>Reproduce by `yolo val semseg data=cityscapes.yaml batch=1 device=0|cpu`
+- **Params** and **FLOPs** values are for the fused model after `model.fuse()`, which merges Conv and BatchNorm layers. Pretrained checkpoints retain the full training architecture and may show higher counts.
+
 ## Train
 
-Train YOLO26n-semseg on the Cityscapes8 dataset for 100 [epochs](https://www.ultralytics.com/glossary/epoch) at image size 512. For a full list of available arguments see the [Configuration](../usage/cfg.md) page.
+Train YOLO26n-semseg on the Cityscapes8 dataset for 100 [epochs](https://www.ultralytics.com/glossary/epoch) at image size 1024. For a full list of available arguments see the [Configuration](../usage/cfg.md) page.
 
 !!! example
 
@@ -31,24 +37,26 @@ Train YOLO26n-semseg on the Cityscapes8 dataset for 100 [epochs](https://www.ult
         # Load a model
         model = YOLO("yolo26n-semseg.yaml")  # build a new model from YAML
         model = YOLO("yolo26n-semseg.pt")  # load a pretrained model (recommended for training)
-        model = YOLO("yolo26n-semseg.yaml").load("yolo26n.pt")  # build from YAML and transfer weights
+        model = YOLO("yolo26n-semseg.yaml").load("yolo26n-semseg.pt")  # build from YAML and transfer weights
 
         # Train the model
-        results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=512)
+        results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=1024)
         ```
 
     === "CLI"
 
         ```bash
         # Build a new model from YAML and start training from scratch
-        yolo semseg train data=cityscapes8.yaml model=yolo26n-semseg.yaml epochs=100 imgsz=512
+        yolo semseg train data=cityscapes8.yaml model=yolo26n-semseg.yaml epochs=100 imgsz=1024
 
         # Start training from a pretrained *.pt model
-        yolo semseg train data=cityscapes8.yaml model=yolo26n-semseg.pt epochs=100 imgsz=512
+        yolo semseg train data=cityscapes8.yaml model=yolo26n-semseg.pt epochs=100 imgsz=1024
 
         # Build a new model from YAML, transfer pretrained weights to it and start training
-        yolo semseg train data=cityscapes8.yaml model=yolo26n-semseg.yaml pretrained=yolo26n-semseg.pt epochs=100 imgsz=512
+        yolo semseg train data=cityscapes8.yaml model=yolo26n-semseg.yaml pretrained=yolo26n-semseg.pt epochs=100 imgsz=1024
         ```
+
+See full `train` mode details in the [Train](../modes/train.md) page.
 
 ### Dataset format
 
