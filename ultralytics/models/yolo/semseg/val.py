@@ -19,7 +19,7 @@ from ultralytics.utils import LOGGER, RANK
 from ultralytics.utils.metrics import SemsegMetrics
 
 
-class SemanticValidator(BaseValidator):
+class SemanticSegmentationValidator(BaseValidator):
     """Validator for semantic segmentation models.
 
     This validator evaluates semantic segmentation models using mIoU and pixel accuracy metrics.

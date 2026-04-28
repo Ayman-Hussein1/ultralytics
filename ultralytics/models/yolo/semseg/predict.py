@@ -15,7 +15,7 @@ from ultralytics.utils import DEFAULT_CFG
 from ultralytics.utils import ops
 
 
-class SemanticPredictor(BasePredictor):
+class SemanticSegmentationPredictor(BasePredictor):
     """Predictor for semantic segmentation models.
 
     This predictor processes model outputs to produce per-pixel class label maps.

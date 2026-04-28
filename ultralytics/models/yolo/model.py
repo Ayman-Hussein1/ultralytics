@@ -118,9 +118,9 @@ class YOLO(Model):
             },
             "semseg": {
                 "model": SemanticSegmentationModel,
-                "trainer": yolo.semseg.SemanticTrainer,
-                "validator": yolo.semseg.SemanticValidator,
-                "predictor": yolo.semseg.SemanticPredictor,
+                "trainer": yolo.semseg.SemanticSegmentationTrainer,
+                "validator": yolo.semseg.SemanticSegmentationValidator,
+                "predictor": yolo.semseg.SemanticSegmentationPredictor,
             },
         }
 

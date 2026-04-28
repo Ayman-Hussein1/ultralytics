@@ -19,7 +19,7 @@ from ultralytics.utils.plotting import colors
 from ultralytics.utils.torch_utils import torch_distributed_zero_first
 
 
-class SemanticTrainer(BaseTrainer):
+class SemanticSegmentationTrainer(BaseTrainer):
     """Trainer for YOLO semantic segmentation models.
 
     This trainer handles semantic segmentation specific training including dataset building,
@@ -127,7 +127,7 @@ class SemanticTrainer(BaseTrainer):
     def get_validator(self):
         """Return a SemanticValidator for model evaluation."""
         self.loss_names = "ce_loss", "dice_loss", "aux_loss"
-        return yolo.semseg.SemanticValidator(
+        return yolo.semseg.SemanticSegmentationValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
 
