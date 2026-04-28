@@ -13,6 +13,8 @@ from typing import Any
 
 import cv2
 import numpy as np
+import torch
+from PIL import Image
 from torch.utils.data import Dataset
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds
@@ -134,7 +136,12 @@ class BaseDataset(Dataset):
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
-        if self.cache == "ram" and self.check_cache_ram():
+        # Shared RAM cache: single torch.uint8 buffer pinned via share_memory_() before workers fork
+        self.img_cache: torch.Tensor | None = None
+        self.img_offsets: list[int] | None = None
+        self.img_shapes: list[tuple[int, int, int]] | None = None
+        # safety_margin=1.0 budgets ~2x cache size to absorb streaming/heap-fragmentation overhead
+        if self.cache == "ram" and self.check_cache_ram(safety_margin=1.0):
             if hyp.deterministic:
                 LOGGER.warning(
                     "cache='ram' may produce non-deterministic training results. "
@@ -222,6 +229,13 @@ class BaseDataset(Dataset):
         Raises:
             FileNotFoundError: If the image file is not found.
         """
+        # Shared RAM cache: zero-copy view into the pinned torch tensor (workers map the same SHM region)
+        if self.cache == "ram" and self.img_cache is not None:
+            offset = self.img_offsets[i]
+            h, w, c = self.img_shapes[i]
+            im = self.img_cache[offset : offset + h * w * c].numpy().reshape(h, w, c)
+            return im, self.im_hw0[i], (h, w)
+
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy
@@ -247,34 +261,102 @@ class BaseDataset(Dataset):
             if im.ndim == 2:
                 im = im[..., None]
 
-            # Add to buffer if training with augmentations
+            # Add to buffer if training with augmentations (skipped on the shared-cache path above)
             if self.augment:
                 self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
                 self.buffer.append(i)
                 if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
                     j = self.buffer.pop(0)
-                    if self.cache != "ram":
-                        self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+                    self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
 
             return im, (h0, w0), im.shape[:2]
 
         return self.ims[i], self.im_hw0[i], self.im_hw[i]
 
     def cache_images(self) -> None:
-        """Cache images to memory or disk for faster training."""
+        """Cache images to memory (shared torch.uint8 tensor) or disk (*.npy files) for faster training.
+
+        For ``cache='ram'`` a two-pass design is used to avoid ~2x peak overhead of holding decoded numpy arrays in a
+        Python list while building the cache: pass 1 reads only image headers (no decode) to compute byte offsets,
+        pass 2 decodes and streams each image directly into the pre-allocated buffer. The buffer is then pinned with
+        ``share_memory_()`` so all DataLoader workers map the same POSIX shared-memory region instead of duplicating
+        the cache per worker (which is the source of the ``num_workers > 0`` leak).
+        """
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_image, "RAM")
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(fcn, range(self.ni))
-            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
-            for i, x in pbar:
-                if self.cache == "disk":
+        if self.cache == "disk":
+            with ThreadPool(NUM_THREADS) as pool:
+                results = pool.imap(self.cache_images_to_disk, range(self.ni))
+                pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
+                for i, _ in pbar:
                     b += self.npy_files[i].stat().st_size
-                else:  # 'ram'
-                    self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
-                    b += self.ims[i].nbytes
-                pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
-            pbar.close()
+                    pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB Disk)"
+                pbar.close()
+            return
+
+        n = self.ni
+
+        def probe(i: int):
+            with Image.open(self.im_files[i]) as img:
+                w0, h0 = img.size
+            r = self.imgsz / max(h0, w0)
+            if r != 1:
+                w = min(math.ceil(w0 * r), self.imgsz)
+                h = min(math.ceil(h0 * r), self.imgsz)
+            else:
+                w, h = w0, h0
+            return i, (h0, w0), (h, w, self.channels)
+
+        def load(i: int):
+            im = imread(self.im_files[i], flags=self.cv2_flag)
+            h0, w0 = im.shape[:2]
+            r = self.imgsz / max(h0, w0)
+            if r != 1:
+                w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            if im.ndim == 2:
+                im = im[..., None]
+            return i, im
+
+        try:
+            shapes = [(0, 0, 0)] * n
+            hw0 = [(0, 0)] * n
+            with ThreadPool(NUM_THREADS) as pool:
+                pbar = TQDM(pool.imap(probe, range(n)), total=n, disable=LOCAL_RANK > 0)
+                for i, h0w0, shp in pbar:
+                    hw0[i] = h0w0
+                    shapes[i] = shp
+                    pbar.desc = f"{self.prefix}Probing image sizes"
+                pbar.close()
+
+            offsets = [0] * n
+            pos = 0
+            for i, (h, w, c) in enumerate(shapes):
+                offsets[i] = pos
+                pos += h * w * c
+
+            cache = torch.empty(pos, dtype=torch.uint8)
+            with ThreadPool(NUM_THREADS) as pool:
+                pbar = TQDM(pool.imap(load, range(n)), total=n, disable=LOCAL_RANK > 0)
+                for i, im in pbar:
+                    sz = im.nbytes
+                    cache[offsets[i] : offsets[i] + sz] = torch.from_numpy(np.ascontiguousarray(im).reshape(-1))
+                    b += sz
+                    pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB RAM)"
+                pbar.close()
+
+            cache.share_memory_()
+        except (MemoryError, OSError, RuntimeError) as e:
+            LOGGER.warning(
+                f"{self.prefix}cache='ram' disabled: {type(e).__name__}: {e}. "
+                "Common cause: /dev/shm quota in Docker (raise with --shm-size). Falling back to disk reads."
+            )
+            self.cache = None
+            return
+
+        self.img_cache = cache
+        self.img_offsets = offsets
+        self.img_shapes = shapes
+        self.im_hw0 = hw0
 
     def cache_images_to_disk(self, i: int) -> None:
         """Save an image as an *.npy file for faster loading."""
