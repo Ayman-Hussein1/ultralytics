@@ -24,8 +24,8 @@ def onnx2deepx(
         imgsz (tuple[int, int]): Export image size as ``(height, width)``.
         dataset (DataLoader): Calibration dataloader used to build the DeepX config.
         metadata (dict | None, optional): Optional metadata to save as YAML. Defaults to None.
-        optimize (bool, optional): If True, enables higher compiler optimization which reduces inference
-            latency and increases compilation time. Defaults to False.
+        optimize (bool, optional): If True, enables higher compiler optimization which reduces inference latency and
+            increases compilation time. Defaults to False.
         prefix (str, optional): Logging prefix. Defaults to "".
 
     Returns:
