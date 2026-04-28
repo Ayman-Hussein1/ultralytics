@@ -83,7 +83,7 @@ The `dx_com` compiler package will be automatically installed from the DeepX SDK
 | `data`      | `str`            | `'coco128.yaml'` | Dataset configuration file used for INT8 calibration. Specifies the calibration image source.                                           |
 | `fraction`  | `float`          | `1.0`            | Fraction of the calibration dataset to use. Reduce to speed up export; 100–400 images are typically sufficient for good accuracy.       |
 | `device`    | `str`            | `None`           | Specifies the device for exporting: GPU (`device=0`) or CPU (`device=cpu`).                                                             |
-| `opt_level` | `int`            | `0`              | Optimization level for the DeepX compiler (`0` or `1`). Higher levels reduce inference latency but increase compilation time.           |
+| `optimize`  | `bool`           | `False`          | Enables higher compiler optimization which reduces inference latency and increases compilation time.                                     |
 
 !!! tip
 

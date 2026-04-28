@@ -14,7 +14,7 @@ def onnx2deepx(
     imgsz: tuple[int, int],
     dataset,
     metadata: dict | None = None,
-    opt_level: int = 0,
+    optimize: bool = False,
     prefix: str = "",
 ) -> Path:
     """Convert an ONNX model to DeepX format using the DeepX CLI tools.
@@ -24,8 +24,8 @@ def onnx2deepx(
         imgsz (tuple[int, int]): Export image size as ``(height, width)``.
         dataset (DataLoader): Calibration dataloader used to build the DeepX config.
         metadata (dict | None, optional): Optional metadata to save as YAML. Defaults to None.
-        opt_level (int, optional): Optimization level for the DeepX compiler (0-1). Higher levels reduce inference
-            latency but increase compilation time. Defaults to 0.
+        optimize (bool, optional): If True, enables higher compiler optimization which reduces inference
+            latency and increases compilation time. Defaults to False.
         prefix (str, optional): Logging prefix. Defaults to "".
 
     Returns:
@@ -70,7 +70,7 @@ def onnx2deepx(
         model=str(onnx_file),
         output_dir=str(export_path),
         config=str(config_path),
-        opt_level=opt_level,
+        opt_level=int(optimize),
     )
 
     if metadata is not None:
