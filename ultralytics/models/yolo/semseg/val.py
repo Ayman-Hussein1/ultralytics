@@ -64,7 +64,7 @@ class SemanticSegmentationValidator(BaseValidator):
         labels = getattr(self.dataset, "labels", []) if self.dataset is not None else []
         self.image_shapes = {lb["im_file"]: tuple(lb["shape"]) for lb in labels if "im_file" in lb and "shape" in lb}
         self.results_dir = None
-        if self.args.save_mask:
+        if self.args.save_json:
             self.results_dir = self.save_dir / "results"
             self.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -115,7 +115,7 @@ class SemanticSegmentationValidator(BaseValidator):
         targets = batch["semantic_mask"]
         if preds.shape[1:] != targets.shape[1:]:
             preds = F.interpolate(preds.float().unsqueeze(1), targets.shape[1:], mode="nearest").squeeze(1).long()
-        if self.args.save_mask:
+        if self.args.save_json:
             self.save_pred_masks(preds, batch)
         self.metrics.process(preds, targets)
 
@@ -179,7 +179,7 @@ class SemanticSegmentationValidator(BaseValidator):
             for i, name in self.names.items():
                 if i < len(per_class):
                     LOGGER.info(f"  {name}: IoU={per_class[i]:.4f}")
-        if self.args.save_mask and self.results_dir is not None:
+        if self.args.save_json and self.results_dir is not None:
             LOGGER.info(f"Semantic prediction masks saved to {self.results_dir}")
 
     def build_dataset(self, img_path, mode="val", batch=None):
