@@ -16,7 +16,7 @@ train: images/train # train images (relative to 'path') 2975 images
 val: images/val # val images (relative to 'path') 500 images
 test: images/test # test images (relative to 'path') 1525 images
 
-masks_dir: masks # mask dir (PNG files, pixel values = class IDs 0-18, 255 = ignore/void)
+masks_dir: masks # mask dir
 
 # Cityscapes 19-class labels
 names:
@@ -77,3 +77,35 @@ label_mapping:
   31: 16
   32: 17
   33: 18
+
+# Download script/URL (optional)
+download: |
+  from pathlib import Path
+  from shutil import copy2
+
+  cityscapes_dir = Path(yaml["path"])  # dataset root dir
+  # Manually download and extract the official Cityscapes leftImg8bit and gtFine archives into cityscapes_dir first.
+  leftimg8bit_dir = cityscapes_dir / "leftImg8bit"
+  gtfine_dir = cityscapes_dir / "gtFine"
+
+  for split in ("train", "val", "test"):
+      print(f"Processing {split} set")
+      src_image_dir = leftimg8bit_dir / split
+      dst_image_dir = cityscapes_dir / "images" / split
+      dst_mask_dir = cityscapes_dir / "masks" / split
+      dst_image_dir.mkdir(parents=True, exist_ok=True)
+      dst_mask_dir.mkdir(parents=True, exist_ok=True)
+
+      image_paths = sorted(src_image_dir.rglob("*_leftImg8bit.png"))
+      for image_path in image_paths:
+          relative_path = image_path.relative_to(src_image_dir)
+          mask_path = gtfine_dir / split / relative_path.parent / image_path.name.replace(
+              "_leftImg8bit.png", "_gtFine_labelIds.png"
+          )
+          if not mask_path.exists():
+              raise FileNotFoundError(f"Mask not found for {image_path}: {mask_path}")
+
+          image_name = image_path.name.replace("_leftImg8bit", "")
+          mask_name = mask_path.name.replace("_gtFine_labelIds", "")
+          copy2(image_path, dst_image_dir / image_name)
+          copy2(mask_path, dst_mask_dir / mask_name)
