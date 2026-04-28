@@ -51,10 +51,6 @@ The `dx_com` compiler package will be automatically installed from the DeepX SDK
 
 ### Usage
 
-!!! note
-
-    Export is currently supported for **detection models** only. Support for additional tasks may be added in future releases.
-
 !!! example "Usage"
 
     === "Python"
@@ -112,10 +108,6 @@ The `.dxnn` file is the compiled model binary that the `dx_engine` runtime loads
 
 Once you've successfully exported your Ultralytics YOLO model to DeepX format, the next step is deploying these models on DeepX NPU hardware.
 
-### Installation
-
-The `dx_engine` runtime package is required for inference and will be installed automatically on first use.
-
 !!! tip "Installation"
 
     === "CLI"
@@ -155,7 +147,28 @@ The `dx_engine` runtime package is required for inference and will be installed 
 
 !!! note
 
-    The DeepX backend converts each input image from normalized float `[0, 1]` in BCHW format to uint8 `[0, 255]` in HWC format before passing it to the NPU runtime, as required by the `dx_engine` inference contract.
+    - `dx_engine` runtime package is required for inference and will be installed automatically on first use.
+
+### Visualizing with dxtron
+
+[dxtron](https://sdk.deepx.ai/) is DeepX's graph visualizer for inspecting the compiled `.dxnn` model.
+
+Install `dxtron` on x86-64 Linux by downloading the `.deb` package from the DeepX SDK and installing it via `dpkg`:
+
+```bash
+wget https://sdk.deepx.ai/release/dxtron/v2.0.1/dxtron_2.0.1_amd64.deb
+sudo dpkg -i dxtron_2.0.1_amd64.deb
+```
+
+Then open your exported model:
+
+```bash
+dxtron yolo26n_deepx_model/yolo26n.dxnn
+```
+
+!!! note
+
+    `dxtron` is only available for **x86-64 Linux**. ARM64/aarch64 and non-Linux platforms are not supported.
 
 ## Real-World Applications
 
@@ -206,7 +219,7 @@ DeepX NPUs are designed to execute INT8 computations at maximum efficiency. The 
 
 ### What platforms are supported for DeepX export?
 
-DeepX model export (compilation) requires an **x86-64 Linux** host. The export step is not supported on ARM64/aarch64 machines. Inference using the exported `.dxnn` model can be run on any platform supported by the `dx_engine` runtime.
+DeepX model export (compilation) requires an **x86-64 Linux** host. The export step is not supported on ARM64, aarch64 and Windows machines. Inference using the exported `.dxnn` model can be run on any Linux platform (x86-64 and ARM64) supported by the `dx_engine` runtime.
 
 ### What is the output of a DeepX export?
 
@@ -218,8 +231,12 @@ The export creates a directory (e.g., `yolo26n_deepx_model/`) containing:
 
 ### Can I deploy custom-trained models on DeepX hardware?
 
-Yes. Any model trained using [Ultralytics Train Mode](../modes/train.md) and exported with `format="deepx"` can be deployed on DeepX NPU hardware, provided it uses supported layer operations. Export is currently limited to **detection models**.
+Yes. Any model trained using [Ultralytics Train Mode](../modes/train.md) and exported with `format="deepx"` can be deployed on DeepX NPU hardware, provided it uses supported layer operations. Export supports detection, segmentation, pose estimation, oriented bounding box (OBB), and classification tasks.
 
 ### How many calibration images should I use for DeepX export?
 
 The DeepX export pipeline defaults to 100 calibration images using the EMA calibration method. This is generally sufficient for good quantization accuracy. You can adjust the calibration dataset using the `data` and `fraction` arguments, but using more than a few hundred images rarely improves results significantly.
+
+### How do I install the DeepX runtime on non-Trixie platforms?
+
+On platforms other than Debian Trixie (ARM64), the runtime is not auto-installed via APT. You need to manually install the NPU driver (`dxrt-driver-dkms`), runtime library (`libdxrt`), and the `dx_engine` Python wheel. The backend will attempt to find and install the wheel from `/usr/share/libdxrt/src/python_package/` automatically, but if that fails, see the [Manual Runtime Installation](#installation_1) section above for step-by-step instructions. If you encounter PEP 668 errors on Python 3.12+, use a virtual environment.

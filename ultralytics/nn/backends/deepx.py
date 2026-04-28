@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from ultralytics.utils import ARM64, IS_DEBIAN_TRIXIE, LOGGER
-from ultralytics.utils.checks import check_apt_requirements, is_sudo_available
+from ultralytics.utils.checks import check_apt_requirements, install_deb, is_sudo_available
 
 from .base import BaseBackend
+
+# DeepX runtime CLI and install locations
+DXRT_CMD = ["dxrt-cli", "--version"]
+SIXFAB_WHEEL_DIR = Path("/opt/sixfab-dx/wheels")  # arm64 Trixie wheel location (from sixfab-dx APT package)
+LIBDXRT_WHEEL_DIR = Path("/usr/share/libdxrt/src/python_package")  # x86-64 wheel location (from libdxrt .deb)
+
+# Download URLs
+SIXFAB_REPO_URL = "https://github.com/sixfab/sixfab_dx/"
+DRIVER_DEB_URL = (
+    "https://github.com/DEEPX-AI/dx_rt_npu_linux_driver/raw/main/release/2.4.0/dxrt-driver-dkms_2.4.0-2_all.deb"
+)
+RUNTIME_DEB_URL = "https://github.com/DEEPX-AI/dx_rt/raw/main/release/3.3.0/libdxrt_3.3.0_all.deb"
+DEEPX_DOCS_URL = "https://docs.ultralytics.com/integrations/deepx/"
 
 
 class DeepXBackend(BaseBackend):
@@ -24,49 +39,60 @@ class DeepXBackend(BaseBackend):
     def load_model(self, weight: str | Path) -> None:
         """Load a DeepX model from a directory containing a .dxnn file.
 
+        Auto-installs the DeepX runtime and ``dx_engine`` Python package on supported platforms:
+        arm64 Debian Trixie via the Sixfab APT repository, or x86-64 Linux via the NPU driver and libdxrt
+        ``.deb`` packages from the DEEPX-AI GitHub releases.
+
         Args:
             weight (str | Path): Path to the DeepX model directory containing the .dxnn binary.
 
         Raises:
             FileNotFoundError: If no .dxnn file is found in the given directory.
+            OSError: If the ``dx_engine`` wheel cannot be located after runtime install.
         """
-        cmd = ["dxrt-cli", "--version"]
-        help_url = "https://github.com/sixfab/sixfab_dx/"
+        # 1. DeepX runtime (dxrt-cli): install if missing
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            subprocess.run(DXRT_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError):
-            LOGGER.info(f"\nDeepX inference requires the DeepX runtime. Attempting install from {help_url}")
-            if not (IS_DEBIAN_TRIXIE and ARM64):
-                raise OSError("DeepX runtime auto-install is only supported on Debian Trixie (arm64).")
-            sudo = "sudo " if is_sudo_available() else ""
-            for c in (
-                f"wget -qO - https://sixfab.github.io/sixfab_dx/public.gpg | {sudo}gpg --dearmor -o /usr/share/keyrings/sixfab-dx.gpg",
-                f'echo "deb [signed-by=/usr/share/keyrings/sixfab-dx.gpg] https://sixfab.github.io/sixfab_dx trixie main" | {sudo}tee /etc/apt/sources.list.d/sixfab-dx.list',
-            ):
-                subprocess.run(c, shell=True, check=True, stdout=subprocess.DEVNULL)
-            check_apt_requirements(["sixfab-dx"])
+            if IS_DEBIAN_TRIXIE and ARM64:
+                # arm64 Trixie: install sixfab-dx via APT
+                LOGGER.info(f"\nDeepX inference requires DeepX runtime. Attempting install from {SIXFAB_REPO_URL}")
+                sudo = "sudo " if is_sudo_available() else ""
+                for c in (
+                    f"wget -qO - https://sixfab.github.io/sixfab_dx/public.gpg | {sudo}gpg --dearmor -o /usr/share/keyrings/sixfab-dx.gpg",
+                    f'echo "deb [signed-by=/usr/share/keyrings/sixfab-dx.gpg] https://sixfab.github.io/sixfab_dx trixie main" | {sudo}tee /etc/apt/sources.list.d/sixfab-dx.list',
+                ):
+                    subprocess.run(c, shell=True, check=True, stdout=subprocess.DEVNULL)
+                check_apt_requirements(["sixfab-dx"])
+            else:
+                # x86-64 Linux: download and dpkg install NPU driver + libdxrt runtime from GitHub
+                LOGGER.info("DeepX runtime not found. Attempting to install NPU driver and libdxrt...")
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    install_deb(DRIVER_DEB_URL, Path(tmpdir), "NPU driver")
+                    install_deb(RUNTIME_DEB_URL, Path(tmpdir), "runtime (libdxrt)")
 
+        # 2. dx_engine Python package: pip install bundled wheel if missing
         try:
             from dx_engine import InferenceEngine
         except ImportError:
-            if IS_DEBIAN_TRIXIE and ARM64:
-                wheels = sorted(Path("/opt/sixfab-dx/wheels").glob("dx_engine-*.whl"))
-                if not wheels:
-                    raise FileNotFoundError(
-                        "No dx_engine wheel found in /opt/sixfab-dx/wheels/. Ensure sixfab-dx is installed."
-                    )
-                subprocess.run(["pip", "install", str(wheels[-1])], check=True)
-            else:
+            wheel_dir = SIXFAB_WHEEL_DIR if (IS_DEBIAN_TRIXIE and ARM64) else LIBDXRT_WHEEL_DIR
+            wheels = sorted(wheel_dir.glob("dx_engine-*.whl")) if wheel_dir.exists() else []
+            if not wheels:
                 raise OSError(
-                    "dx_engine is not installed. Auto-install is only supported on Debian Trixie (arm64). "
-                    "Please install dx_engine manually and try again."
+                    f"dx_engine wheel not found in {wheel_dir}. Runtime auto-install may have failed. "
+                    f"For manual setup, see {DEEPX_DOCS_URL}"
                 )
+            LOGGER.info(f"DeepX inference requires dx_engine. Attempting to install from {wheels[-1]}")
+            subprocess.run([sys.executable, "-m", "pip", "install", str(wheels[-1])], check=True)
             from dx_engine import InferenceEngine
 
-        ver = (
-            subprocess.run(cmd, capture_output=True, check=True).stdout.decode().splitlines()[0].split()[-1].lstrip("v")
-        )
-        LOGGER.info(f"Loading {weight} for DeepX inference... (runtime v{ver})")
+        # Log runtime version if available
+        try:
+            out = subprocess.run(DXRT_CMD, capture_output=True, check=True).stdout.decode()
+            suffix = f" (runtime v{out.splitlines()[0].split()[-1].lstrip('v')})"
+        except (FileNotFoundError, subprocess.CalledProcessError, IndexError):
+            suffix = ""
+        LOGGER.info(f"Loading {weight} for DeepX inference...{suffix}")
 
         w = Path(weight)
         found = next(w.rglob("*.dxnn"), None)
