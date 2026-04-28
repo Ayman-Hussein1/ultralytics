@@ -22,6 +22,7 @@ OKS_SIGMA = (
     / 10.0
 )
 RLE_WEIGHT = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5])
+CITYSCAPES_WEIGHT = torch.FloatTensor([0.8373, 0.918, 0.866, 1.0345, 1.0166, 0.9969, 0.9754, 1.0489, 0.8786, 1.0023, 0.9539, 0.9843, 1.1116, 0.9037, 1.0865, 1.0955, 1.0865, 1.1529, 1.0507])
 
 
 def bbox_ioa(box1: np.ndarray, box2: np.ndarray, iou: bool = False, eps: float = 1e-7) -> np.ndarray:
@@ -1620,3 +1621,131 @@ class OBBMetrics(DetMetrics):
             names (dict[int, str], optional): Dictionary of class names.
         """
         DetMetrics.__init__(self, names)
+
+
+class SemsegMetrics(SimpleClass, DataExportMixin):
+    """Metrics for semantic segmentation: mIoU, pixel accuracy, per-class IoU.
+
+    Attributes:
+        names (dict): Class names mapping.
+        nc (int): Number of classes.
+        device (torch.device | None): Device used for confusion matrix accumulation.
+        ignore_index (int): Label value to ignore during metric accumulation.
+        confusion_matrix (torch.Tensor | None): Accumulated confusion matrix of shape (nc, nc).
+        speed (dict): Processing speed statistics.
+        task (str): Task type identifier.
+    """
+
+    def __init__(self, names=None, device=None):
+        """Initialize SemanticMetrics.
+
+        Args:
+            names (dict, optional): Dictionary mapping class indices to names.
+            device (torch.device | str | None, optional): Device for metric accumulation.
+        """
+        self.names = names or {}
+        self.nc = len(self.names)
+        self.cm_nc = 2 if self.nc == 1 else self.nc
+        self.device = torch.device(device) if device is not None else None
+        self.confusion_matrix = None
+        self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
+
+    def process(self, preds, targets):
+        """Accumulate confusion matrix from predictions and targets.
+
+        Args:
+            preds (torch.Tensor | np.ndarray): Predicted class IDs [B, H, W].
+            targets (torch.Tensor | np.ndarray): Ground truth class IDs [B, H, W].
+        """
+        if self.nc == 0:
+            return
+
+        if not isinstance(preds, torch.Tensor):
+            preds = torch.as_tensor(preds, device=self.device)
+        if not isinstance(targets, torch.Tensor):
+            targets = torch.as_tensor(targets, device=self.device)
+
+        metric_device = self.confusion_matrix.device if self.confusion_matrix is not None else (self.device or preds.device)
+        self.device = metric_device
+        preds = preds.to(metric_device, non_blocking=True).long()
+        targets = targets.to(metric_device, non_blocking=True).long()
+        if self.confusion_matrix is None:
+            self.confusion_matrix = torch.zeros((self.cm_nc, self.cm_nc), device=metric_device, dtype=torch.int64)
+
+        valid = (
+            (targets != 255)
+            & (preds >= 0)
+            & (preds < self.cm_nc)
+            & (targets >= 0)
+            & (targets < self.cm_nc)
+        )
+        hist = torch.bincount(
+            self.cm_nc * targets[valid] + preds[valid], minlength=self.cm_nc**2
+        ).reshape(self.cm_nc, self.cm_nc)
+        self.confusion_matrix += hist.to(self.confusion_matrix.dtype)
+
+    def _compute_iou(self) -> torch.Tensor | None:
+        """Compute per-class IoU tensor on the confusion matrix device."""
+        if self.confusion_matrix is None:
+            return None
+        confusion_matrix = self.confusion_matrix.to(torch.float64)
+        intersection = torch.diagonal(confusion_matrix)
+        union = confusion_matrix.sum(1) + confusion_matrix.sum(0) - intersection
+        return intersection / (union + 1e-10)
+
+    @property
+    def miou(self):
+        """Compute mean IoU (foreground IoU only for binary segmentation)."""
+        iou = self._compute_iou()
+        if iou is None:
+            return 0.0
+        if self.nc == 1:
+            return float(iou[1].item())
+        return float(torch.nanmean(iou).item())
+
+    @property
+    def pixel_accuracy(self):
+        """Compute overall pixel accuracy."""
+        if self.confusion_matrix is None:
+            return 0.0
+        confusion_matrix = self.confusion_matrix.to(torch.float64)
+        return float((torch.diagonal(confusion_matrix).sum() / (confusion_matrix.sum() + 1e-10)).item())
+
+    @property
+    def per_class_iou(self):
+        """Compute per-class IoU values (foreground IoU only for binary segmentation)."""
+        iou = self._compute_iou()
+        if iou is None:
+            return np.zeros(self.nc, dtype=np.float64)
+        if self.nc == 1:
+            return iou[1:].cpu().numpy()
+        return iou.cpu().numpy()
+
+    @property
+    def fitness(self):
+        """Return model fitness as mean IoU."""
+        return self.miou
+
+    @property
+    def keys(self):
+        """Return metric keys for logging."""
+        return ["metrics/mIoU", "metrics/pixel_acc"]
+
+    def mean_results(self):
+        """Return mean results for logging."""
+        return [self.miou, self.pixel_accuracy]
+
+    @property
+    def results_dict(self):
+        """Return results dictionary."""
+        return dict(zip([*self.keys, "fitness"], [*self.mean_results(), self.fitness]))
+
+    @property
+    def curves(self):
+        """Return empty list (no PR curves for semantic seg)."""
+        return []
+
+    @property
+    def curves_results(self):
+        """Return empty list (no PR curve results)."""
+        return []

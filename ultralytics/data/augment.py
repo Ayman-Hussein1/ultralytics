@@ -736,6 +736,8 @@ class Mosaic(BaseMixTransform):
         final_labels = self._cat_labels(mosaic_labels)
 
         final_labels["img"] = img9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
+        if has_sem_mask:
+            final_labels["semantic_mask"] = mask9[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
         return final_labels
 
     @staticmethod
@@ -1420,6 +1422,161 @@ class RandomHSV:
         return labels
 
 
+class SemsegRandomScaleCrop:
+    """Random scale + random crop augmentation for semantic segmentation.
+
+    Randomly scales the image by a factor in [scale_min, scale_max], then takes a random crop of fixed size.
+    If the scaled image is smaller than crop_size, it is padded.
+
+    Attributes:
+        crop_size (tuple): Target (h, w) after cropping.
+        scale_min (float): Minimum scale factor.
+        scale_max (float): Maximum scale factor.
+    """
+
+    def __init__(self, size_range=(512, 2048), crop_size=512, scale_min=0.5, scale_max=2.0):
+        """Initialize SemanticRandomScaleCrop."""
+        self.size_range = (size_range, size_range) if isinstance(size_range, int) else tuple(size_range)
+        self.crop_size = (crop_size, crop_size) if isinstance(crop_size, int) else tuple(crop_size)
+        self.scale_min = scale_min
+        self.scale_max = scale_max
+
+    def __call__(self, labels):
+        """Apply random scale and crop to image and semantic mask."""
+        img = labels["img"]
+        h, w = img.shape[:2]
+
+        # Random scale
+        scale = random.uniform(self.scale_min, self.scale_max)
+        size = int(self.size_range[0] * scale), int(self.size_range[1] * scale)
+        new_w, new_h = rescale_size((h, w), size)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+            labels["semantic_mask"] = cv2.resize(labels["semantic_mask"], (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+        # Pad if smaller than crop size
+        crop_h, crop_w = self.crop_size
+        pad_h = max(crop_h - new_h, 0)
+        pad_w = max(crop_w - new_w, 0)
+        if pad_h > 0 or pad_w > 0:
+            img = cv2.copyMakeBorder(img, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+            if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+                labels["semantic_mask"] = cv2.copyMakeBorder(
+                    labels["semantic_mask"], 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=255
+                )
+            new_h, new_w = img.shape[:2]
+
+        # Random crop
+        y0 = random.randint(0, new_h - crop_h)
+        x0 = random.randint(0, new_w - crop_w)
+        labels["img"] = img[y0 : y0 + crop_h, x0 : x0 + crop_w]
+        if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+            labels["semantic_mask"] = labels["semantic_mask"][y0 : y0 + crop_h, x0 : x0 + crop_w]
+
+        return labels
+
+
+class SemsegRandomScale:
+    """Random scale augmentation for semantic segmentation.
+
+    Randomly scales image and semantic mask by a factor in [scale_min, scale_max] relative to size_range.
+
+    Attributes:
+        scale_min (float): Minimum scale factor.
+        scale_max (float): Maximum scale factor.
+    """
+
+    def __init__(self, scale_min=0.5, scale_max=2.0):
+        """Initialize SemanticRandomScale."""
+        self.scale_min = scale_min
+        self.scale_max = scale_max
+
+    def __call__(self, labels):
+        """Apply random scale to image and semantic mask."""
+        img = labels["img"]
+        h, w = img.shape[:2]
+
+        scale = random.uniform(self.scale_min, self.scale_max)
+        new_h, new_w = int(h * scale), int(w * scale)
+        labels["img"] = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        labels["resized_shape"] = (new_h, new_w)
+
+        if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+            labels["semantic_mask"] = cv2.resize(
+                labels["semantic_mask"], (new_w, new_h), interpolation=cv2.INTER_NEAREST
+            )
+        return labels
+
+
+class SemsegRandomCrop:
+    """Random crop augmentation for semantic segmentation.
+
+    Pads the image to crop_size if smaller, then takes a random crop of fixed size.
+
+    Attributes:
+        crop_size (tuple): Target (h, w) after cropping.
+        pad_val (int): Pixel value used to pad the image when smaller than crop_size.
+        ignore_label (int): Label value used to pad the semantic mask.
+    """
+
+    def __init__(self, crop_size=512, pad_val=114, ignore_label=255):
+        """Initialize SemanticRandomCrop."""
+        self.crop_size = (crop_size, crop_size) if isinstance(crop_size, int) else tuple(crop_size)
+        self.pad_val = pad_val
+        self.ignore_label = ignore_label
+
+    def __call__(self, labels):
+        """Apply padding (if needed) and random crop to image and semantic mask."""
+        img = labels["img"]
+        h, w = img.shape[:2]
+        crop_h, crop_w = self.crop_size
+
+        pad_h = max(crop_h - h, 0)
+        pad_w = max(crop_w - w, 0)
+        if pad_h > 0 or pad_w > 0:
+            img = cv2.copyMakeBorder(
+                img, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=(self.pad_val,) * 3
+            )
+            if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+                labels["semantic_mask"] = cv2.copyMakeBorder(
+                    labels["semantic_mask"], 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=self.ignore_label
+                )
+            h, w = img.shape[:2]
+
+        y0 = random.randint(0, h - crop_h)
+        x0 = random.randint(0, w - crop_w)
+        labels["img"] = img[y0 : y0 + crop_h, x0 : x0 + crop_w]
+        if "semantic_mask" in labels and labels["semantic_mask"] is not None:
+            labels["semantic_mask"] = labels["semantic_mask"][y0 : y0 + crop_h, x0 : x0 + crop_w]
+        return labels
+
+
+
+
+def rescale_size(old_size, size_range):
+    h, w = old_size
+    max_long_edge = max(size_range)
+    max_short_edge = min(size_range)
+    if max_long_edge / max(h, w) <= max_short_edge / min(h, w):
+        scale_factor = max_long_edge / max(h, w)
+        if h >= w:
+            new_h = max_long_edge
+            new_w = int(w * float(scale_factor) + 0.5)
+        else:
+            new_w = max_long_edge
+            new_h = int(h * float(scale_factor) + 0.5)
+    else:
+        scale_factor = max_short_edge / min(h, w)
+        if h >= w:
+            new_w = max_short_edge
+            new_h = int(h * float(scale_factor) + 0.5)
+        else:
+            new_h = max_short_edge
+            new_w = int(w * float(scale_factor) + 0.5)
+    return new_w, new_h
+
+
 class RandomFlip:
     """Apply a random horizontal or vertical flip to an image with a given probability.
 
@@ -1497,13 +1654,179 @@ class RandomFlip:
             instances.flipud(h)
             if self.flip_idx is not None and instances.keypoints is not None:
                 instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
+            if "semantic_mask" in labels:
+                labels["semantic_mask"] = np.ascontiguousarray(np.flipud(labels["semantic_mask"]))
         if self.direction == "horizontal" and random.random() < self.p:
             img = np.fliplr(img)
             instances.fliplr(w)
             if self.flip_idx is not None and instances.keypoints is not None:
                 instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
+            if "semantic_mask" in labels:
+                labels["semantic_mask"] = np.ascontiguousarray(np.fliplr(labels["semantic_mask"]))
         labels["img"] = np.ascontiguousarray(img)
         labels["instances"] = instances
+        return labels
+
+
+class PhotoMetricDistortion:
+    """Apply photometric distortion to image sequentially, every transformation
+    is applied with a probability of 0.5. The position of random contrast is in
+    second or second to last.
+
+    1. random brightness
+    2. random contrast (mode 0)
+    3. convert color from BGR to HSV
+    4. random saturation
+    5. random hue
+    6. convert color from HSV to BGR
+    7. random contrast (mode 1)
+
+    Required Keys:
+
+    - img
+
+    Modified Keys:
+
+    - img
+
+    Args:
+        brightness_delta (int): delta of brightness.
+        contrast_range (tuple): range of contrast.
+        saturation_range (tuple): range of saturation.
+        hue_delta (int): delta of hue.
+    """
+
+    def __init__(
+        self,
+        brightness_delta=32,
+        contrast_range=(0.5, 1.5),
+        saturation_range=(0.5, 1.5),
+        hue_delta=18,
+    ):
+        self.brightness_delta = brightness_delta
+        self.contrast_lower, self.contrast_upper = contrast_range
+        self.saturation_lower, self.saturation_upper = saturation_range
+        self.hue_delta = hue_delta
+
+    @staticmethod
+    def _bgr2hsv(img: np.ndarray) -> np.ndarray:
+        """Convert a BGR image to HSV without relying on mmcv."""
+        return cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_BGR2HSV)
+
+    @staticmethod
+    def _hsv2bgr(img: np.ndarray) -> np.ndarray:
+        """Convert an HSV image to BGR without relying on mmcv."""
+        return cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_HSV2BGR)
+
+    def convert(self, img: np.ndarray, alpha: float = 1.0, beta: float = 0.0) -> np.ndarray:
+        """Multiple with alpha and add beat with clip.
+
+        Args:
+            img (np.ndarray): The input image.
+            alpha (float): Image weights, change the contrast/saturation
+                of the image. Default: 1
+            beta (float): Image bias, change the brightness of the
+                image. Default: 0
+
+        Returns:
+            np.ndarray: The transformed image.
+        """
+
+        dtype = img.dtype
+        img = img.astype(np.float32) * alpha + beta
+        img = np.clip(img, 0, 255)
+        return img.astype(dtype)
+
+    def brightness(self, img: np.ndarray) -> np.ndarray:
+        """Brightness distortion.
+
+        Args:
+            img (np.ndarray): The input image.
+        Returns:
+            np.ndarray: Image after brightness change.
+        """
+
+        if random.randint(0, 1):
+            return self.convert(img, beta=random.uniform(-self.brightness_delta, self.brightness_delta))
+        return img
+
+    def contrast(self, img: np.ndarray) -> np.ndarray:
+        """Contrast distortion.
+
+        Args:
+            img (np.ndarray): The input image.
+        Returns:
+            np.ndarray: Image after contrast change.
+        """
+
+        if random.randint(0, 1):
+            return self.convert(img, alpha=random.uniform(self.contrast_lower, self.contrast_upper))
+        return img
+
+    def saturation(self, img: np.ndarray) -> np.ndarray:
+        """Saturation distortion.
+
+        Args:
+            img (np.ndarray): The input image.
+        Returns:
+            np.ndarray: Image after saturation change.
+        """
+
+        if random.randint(0, 1):
+            img = self._bgr2hsv(img)
+            img[:, :, 1] = self.convert(
+                img[:, :, 1], alpha=random.uniform(self.saturation_lower, self.saturation_upper)
+            )
+            img = self._hsv2bgr(img)
+        return img
+
+    def hue(self, img: np.ndarray) -> np.ndarray:
+        """Hue distortion.
+
+        Args:
+            img (np.ndarray): The input image.
+        Returns:
+            np.ndarray: Image after hue change.
+        """
+
+        if random.randint(0, 1):
+            img = self._bgr2hsv(img)
+            img[:, :, 0] = (
+                img[:, :, 0].astype(np.int16) + random.randint(-self.hue_delta, self.hue_delta)
+            ) % 180
+            img = self._hsv2bgr(img)
+        return img
+
+    def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
+        """Transform function to perform photometric distortion on images.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Result dict with images distorted.
+        """
+        img = labels["img"]
+        # random brightness
+        img = self.brightness(img)
+
+        # mode == 0 --> do random contrast first
+        # mode == 1 --> do random contrast last
+        mode = random.randint(0, 1)
+        if mode == 1:
+            img = self.contrast(img)
+
+        # random saturation
+        img = self.saturation(img)
+
+        # random hue
+        img = self.hue(img)
+
+        # random contrast
+        if mode == 0:
+            img = self.contrast(img)
+
+        labels["img"] = img
         return labels
 
 
@@ -1541,6 +1864,7 @@ class LetterBox:
         stride: int = 32,
         padding_value: int = 114,
         interpolation: int = cv2.INTER_LINEAR,
+        ignore_label: int = 255,
     ):
         """Initialize LetterBox object for resizing and padding images.
 
@@ -1565,6 +1889,7 @@ class LetterBox:
         self.center = center  # Put the image in the middle or top-left
         self.padding_value = padding_value
         self.interpolation = interpolation
+        self.ignore_label = ignore_label
 
     def __call__(self, labels: dict[str, Any] | None = None, image: np.ndarray = None) -> dict[str, Any] | np.ndarray:
         """Resize and pad an image for object detection, instance segmentation, or pose estimation tasks.
@@ -1632,6 +1957,14 @@ class LetterBox:
             pad_img = np.full((h + top + bottom, w + left + right, c), fill_value=self.padding_value, dtype=img.dtype)
             pad_img[top : top + h, left : left + w] = img
             img = pad_img
+
+        # Apply same spatial transform to semantic mask (nearest interp to preserve class IDs)
+        if "semantic_mask" in labels:
+            sem_mask = labels["semantic_mask"]
+            if shape[::-1] != new_unpad:
+                sem_mask = cv2.resize(sem_mask, new_unpad, interpolation=cv2.INTER_NEAREST)
+            sem_mask = cv2.copyMakeBorder(sem_mask, top, bottom, left, right, cv2.BORDER_CONSTANT, value=self.ignore_label)
+            labels["semantic_mask"] = sem_mask
 
         if labels.get("ratio_pad"):
             labels["ratio_pad"] = (labels["ratio_pad"], (left, top))  # for evaluation

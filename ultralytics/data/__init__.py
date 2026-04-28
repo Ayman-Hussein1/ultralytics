@@ -5,7 +5,7 @@ from .build import build_dataloader, build_grounding, build_yolo_dataset, load_i
 from .dataset import (
     ClassificationDataset,
     GroundingDataset,
-    SemanticDataset,
+    SemsegDataset,
     YOLOConcatDataset,
     YOLODataset,
     YOLOMultiModalDataset,
@@ -15,7 +15,7 @@ __all__ = (
     "BaseDataset",
     "ClassificationDataset",
     "GroundingDataset",
-    "SemanticDataset",
+    "SemsegDataset",
     "YOLOConcatDataset",
     "YOLODataset",
     "YOLOMultiModalDataset",

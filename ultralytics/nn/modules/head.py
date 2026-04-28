@@ -20,7 +20,18 @@ from .conv import Conv, DWConv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init
 
-__all__ = "OBB", "Classify", "Detect", "Pose", "RTDETRDecoder", "Segment", "YOLOEDetect", "YOLOESegment", "v10Detect"
+__all__ = (
+    "OBB",
+    "Classify",
+    "Detect",
+    "Pose",
+    "RTDETRDecoder",
+    "Segment",
+    "SemanticSegment",
+    "YOLOEDetect",
+    "YOLOESegment",
+    "v10Detect",
+)
 
 
 class Detect(nn.Module):
@@ -1776,3 +1787,70 @@ class v10Detect(Detect):
     def fuse(self):
         """Remove the one2many head for inference optimization."""
         self.cv2 = self.cv3 = None
+
+
+class SemanticSegment(nn.Module):
+    """YOLO semantic segmentation head for per-pixel classification.
+
+    This head produces dense per-pixel class predictions.
+    Unlike instance segmentation, no bounding boxes or instance masks are produced.
+
+    Attributes:
+        nc (int): Number of semantic classes.
+        nl (int): Number of input feature levels.
+        stride (torch.Tensor): Feature map strides.
+        export (bool): Export mode flag.
+    """
+
+    dynamic = False
+    export = False
+    format = None
+    shape = None
+
+    def __init__(self, nc=19, ch=()):
+        """Initialize the semantic segmentation head.
+
+        Args:
+            nc (int): Number of semantic classes.
+            ch (tuple): Tuple of channel sizes from backbone feature maps (P3, P4, P5).
+        """
+        super().__init__()
+        self.nc = nc
+        self.nl = len(ch)
+        self.stride = torch.zeros(self.nl)
+
+        c_mid = ch[0]  # use P3 channel width as intermediate dimension
+
+        # Final classifier
+        self.classifier = nn.Sequential(
+            Conv(c_mid, c_mid, 3),
+            nn.Conv2d(c_mid, nc, 1),
+        )
+
+        # Auxiliary head on P4 (index 1) for training
+        if len(ch) > 1:
+            self.aux_head = nn.Sequential(Conv(ch[1], c_mid, 3), nn.Conv2d(c_mid, nc, 1))
+        else:
+            self.aux_head = None
+
+    def forward(self, x):
+        """Forward pass: fuse multi-scale features and predict per-pixel classes.
+
+        Args:
+            x (list[torch.Tensor]): List of feature maps [P3, P4, P5].
+
+        Returns:
+            (torch.Tensor): Logits of shape [B, nc, H/4, W/4] during training,
+                or [B, nc, H, W] during inference/export.
+        """
+        feat = x[0]
+        # Classify
+        logits = self.classifier(feat)  # [B, nc, H/4, W/4]
+
+        if self.training:
+            if self.aux_head is not None:
+                return logits, self.aux_head(x[1])  # main + aux (P4)
+            return logits
+        if self.export:
+            return F.interpolate(logits, scale_factor=4, mode="bilinear", align_corners=False)
+        return logits

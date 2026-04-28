@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+import random
 from collections import defaultdict
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
@@ -18,16 +21,24 @@ from torch.utils.data import ConcatDataset
 from ultralytics.utils import LOCAL_RANK, LOGGER, NUM_THREADS, TQDM, colorstr
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.ops import resample_segments, segments2boxes
+from ultralytics.utils.patches import imread
 from ultralytics.utils.torch_utils import TORCHVISION_0_18
 
 from .augment import (
     Compose,
     Format,
     LetterBox,
+    RandomFlip,
+    RandomHSV,
     RandomLoadText,
     classify_augmentations,
     classify_transforms,
     v8_transforms,
+    SemsegRandomScaleCrop,
+    SemsegRandomScale,
+    SemsegRandomCrop,
+    PhotoMetricDistortion,
+    Mosaic
 )
 from .base import BaseDataset
 from .converter import merge_multi_segment
@@ -678,13 +689,573 @@ class YOLOConcatDataset(ConcatDataset):
             dataset.close_mosaic(hyp)
 
 
-# TODO: support semantic segmentation
-class SemanticDataset(BaseDataset):
-    """Semantic Segmentation Dataset."""
+class SemsegDataset(BaseDataset):
+    """Dataset for semantic segmentation with PNG mask labels.
 
-    def __init__(self):
-        """Initialize a SemanticDataset object."""
-        super().__init__()
+    Expects a directory structure where each image has a corresponding PNG mask file with the same stem.
+    Pixel values in masks represent class IDs, with 255 as the ignore label.
+
+    The mask directory is specified in the dataset YAML via 'masks_dir' key, and mirrors the
+    images/ directory structure (e.g., images/train/ -> masks/train/).
+
+    Attributes:
+        data (dict): Dataset configuration from YAML.
+        mask_files (list[str]): List of mask file paths corresponding to images.
+    """
+
+    def __init__(self, *args, data=None, **kwargs):
+        """Initialize SemanticDataset.
+
+        Args:
+            *args: Arguments passed to BaseDataset.
+            data (dict): Dataset configuration dictionary.
+            **kwargs: Keyword arguments passed to BaseDataset.
+        """
+        self.data = data or {}
+        self.ignore_label = 255
+        self.label_mapping = self._parse_label_mapping(self.data.get("label_mapping"))
+        self.mask_files = []
+        self.mask_ims = []
+        self.mask_npy_files = []
+        super().__init__(*args, **kwargs)
+
+    def _parse_label_mapping(self, mapping):
+        """Normalize label_mapping entries from dataset YAML into integer-to-integer ids."""
+        if mapping is None:
+            return {}
+        if not isinstance(mapping, dict):
+            raise TypeError(
+                f"Expected 'label_mapping' to be a dict in dataset YAML, but got {type(mapping).__name__}."
+            )
+
+        normalized = {}
+        for src, dst in mapping.items():
+            src = int(src)
+            if isinstance(dst, str):
+                dst = dst.strip()
+                dst = self.ignore_label if dst == "ignore_label" else int(dst)
+            elif dst is None:
+                dst = self.ignore_label
+            else:
+                dst = int(dst)
+            normalized[src] = dst
+        return normalized
+
+    def _get_mask_dir(self) -> Path:
+        """Build mask directory by replacing `images` path component with configured masks dir."""
+        masks_dir_name = self.data.get("masks_dir", "masks")
+        img_path = Path(self.img_path[0] if isinstance(self.img_path, list) else self.img_path)
+        parts = list(img_path.parts)
+        for i, p in enumerate(parts):
+            if p == "images":
+                parts[i] = masks_dir_name
+                break
+        return Path(*parts)
+
+    @staticmethod
+    def _resolve_mask_file(im_file: str, mask_dir: Path) -> str:
+        """Resolve semantic mask path for an image using common mask extensions."""
+        stem = Path(im_file).stem
+        for ext in (".png", ".PNG", ".bmp", ".tif"):
+            candidate = mask_dir / f"{stem}{ext}"
+            if candidate.exists():
+                return str(candidate)
+        return str(mask_dir / f"{stem}.png")
+
+    def _semantic_cache_hash(self, mask_files: list[str]) -> str:
+        """Return a hash for semantic cache validation that also includes label_mapping changes."""
+        mapping = json.dumps(self.label_mapping, sort_keys=True, separators=(",", ":"))
+        return get_hash(self.im_files + mask_files + [f"label_mapping:{mapping}"])
+
+    def cache_labels(self, path: Path = Path("./labels.cache")) -> dict[str, Any]:
+        """Cache semantic labels and image-mask pairing metadata.
+
+        Args:
+            path (Path): Path where to save the cache file.
+
+        Returns:
+            (dict[str, Any]): Cached semantic metadata.
+        """
+        x = {"labels": []}
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # missing, found, empty, corrupt, messages
+        desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+        mask_dir = self._get_mask_dir()
+        total = len(self.im_files)
+
+        pbar = TQDM(self.im_files, desc=desc, total=total)
+        mask_files = []
+        for im_file in pbar:
+            mask_file = self._resolve_mask_file(im_file, mask_dir)
+            mask_files.append(mask_file)
+
+            try:
+                with Image.open(im_file) as im:
+                    shape = im.size[::-1]  # (h, w)
+            except Exception as e:
+                nc += 1
+                msgs.append(f"{self.prefix}{im_file}: ignoring corrupt image: {e}")
+                pbar.desc = f"{desc} {nf} masks, {nm} missing, {nc} corrupt"
+                continue
+
+            if Path(mask_file).exists():
+                nf += 1
+            else:
+                nm += 1
+                msgs.append(f"{self.prefix}{mask_file}: missing semantic mask, using ignore_label fallback")
+
+            x["labels"].append(
+                {
+                    "im_file": im_file,
+                    "mask_file": mask_file,
+                    "shape": shape,
+                    "cls": np.array([], dtype=np.float32),
+                    "bboxes": np.zeros((0, 4), dtype=np.float32),
+                    "segments": [],
+                    "normalized": True,
+                    "bbox_format": "xywh",
+                }
+            )
+            pbar.desc = f"{desc} {nf} masks, {nm} missing, {nc} corrupt"
+        pbar.close()
+
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        if nf == 0:
+            LOGGER.warning(f"{self.prefix}No semantic masks found in {mask_dir}.")
+        x["hash"] = self._semantic_cache_hash(mask_files)
+        x["results"] = nf, nm, ne, nc, total
+        x["msgs"] = msgs
+        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return x
+
+    def get_labels(self):
+        """Load semantic labels from cache or scan image-mask paths.
+
+        Returns:
+            (list[dict]): List of label dictionaries with mask file paths and image shapes.
+        """
+        mask_dir = self._get_mask_dir()
+        cache_path = mask_dir.with_suffix(".cache")
+        mask_files = [self._resolve_mask_file(im_file, mask_dir) for im_file in self.im_files]
+
+        try:
+            cache, exists = load_dataset_cache_file(cache_path), True
+            assert cache["version"] == DATASET_CACHE_VERSION
+            assert cache["hash"] == self._semantic_cache_hash(mask_files)
+        except (FileNotFoundError, AssertionError, AttributeError, ModuleNotFoundError):
+            cache, exists = self.cache_labels(cache_path), False
+
+        nf, nm, ne, nc, n = cache.pop("results")
+        if exists and LOCAL_RANK in {-1, 0}:
+            d = f"Scanning {cache_path}... {nf} masks, {nm + ne} missing, {nc} corrupt"
+            TQDM(None, desc=self.prefix + d, total=n, initial=n)
+            if cache["msgs"]:
+                LOGGER.info("\n".join(cache["msgs"]))
+
+        [cache.pop(k) for k in ("hash", "version", "msgs")]
+        labels = cache["labels"]
+        if not labels:
+            raise RuntimeError(f"No valid images found in {cache_path}. {HELP_URL}")
+        self.im_files = [lb["im_file"] for lb in labels]
+        self.mask_files = [lb["mask_file"] for lb in labels]
+        self.mask_npy_files = [Path(f).with_suffix(".npy") for f in self.mask_files]
+        self.mask_ims = [None] * len(labels)
+        return labels
+
+    def load_image(self, i, rect_mode=True):
+        """Load an image for semantic segmentation, scaling the short side to imgsz when rect_mode=True."""
+        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+        if im is None:  # not cached in RAM
+            if fn.exists():  # load npy
+                try:
+                    im = np.load(fn)
+                except Exception as e:
+                    LOGGER.warning(f"{self.prefix}Removing corrupt *.npy image file {fn} due to: {e}")
+                    Path(fn).unlink(missing_ok=True)
+                    im = imread(f, flags=self.cv2_flag)  # BGR
+            else:  # read image
+                im = imread(f, flags=self.cv2_flag)  # BGR
+            if im is None:
+                raise FileNotFoundError(f"Image Not Found {f}")
+
+            h0, w0 = im.shape[:2]  # orig hw
+            if rect_mode:  # resize short side to imgsz while maintaining aspect ratio
+                r = self.imgsz / min(h0, w0)
+                if r != 1:
+                    if h0 < w0:
+                        h, w = self.imgsz, math.ceil(w0 * r)
+                    else:
+                        h, w = math.ceil(h0 * r), self.imgsz
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            if im.ndim == 2:
+                im = im[..., None]
+
+            # Add to buffer if training with augmentations
+            if self.augment:
+                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]
+                self.buffer.append(i)
+                if 1 < len(self.buffer) >= self.max_buffer_length:  # prevent empty buffer
+                    j = self.buffer.pop(0)
+                    if self.cache != "ram":
+                        self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+
+            return im, (h0, w0), im.shape[:2]
+
+        return self.ims[i], self.im_hw0[i], self.im_hw[i]
+
+    def set_rectangle(self):
+        """Sort by aspect ratio and set batch shapes for short-side-scaled semantic inputs."""
+        bi = np.floor(np.arange(self.ni) / self.batch_size).astype(int)  # batch index
+        nb = bi[-1] + 1  # number of batches
+
+        s = np.array([x.pop("shape") for x in self.labels])  # hw
+        ar = s[:, 0] / s[:, 1]  # aspect ratio
+        irect = ar.argsort()
+        self.im_files = [self.im_files[i] for i in irect]
+        self.labels = [self.labels[i] for i in irect]
+        ar = ar[irect]
+
+        # Short-side-scaling: short = imgsz, long = imgsz / ar (wide) or imgsz * ar (tall).
+        # Batch shape bounds all images (handles mixed batches).
+        shapes = [[1, 1]] * nb
+        for i in range(nb):
+            ari = ar[bi == i]
+            mini, maxi = ari.min(), ari.max()
+            shapes[i] = [max(maxi, 1), 1 / min(mini, 1)]
+
+        self.batch_shapes = np.ceil(np.array(shapes) * self.imgsz / self.stride + self.pad).astype(int) * self.stride
+        self.batch = bi  # batch index of image
+
+        self.mask_files = [lb["mask_file"] for lb in self.labels]
+        self.mask_npy_files = [Path(f).with_suffix(".npy") for f in self.mask_files]
+
+    def _fallback_mask_shape(self, index: int, image_shape: tuple[int, int] | None = None) -> tuple[int, int]:
+        """Resolve fallback mask shape when source mask is missing/corrupt."""
+        if image_shape is not None:
+            return image_shape
+        if self.im_hw[index] is not None:
+            return self.im_hw[index]
+        if self.im_hw0[index] is not None:
+            return self.im_hw0[index]
+        if "shape" in self.labels[index]:
+            return self.labels[index]["shape"]
+        im = cv2.imread(self.im_files[index], self.cv2_flag)
+        return im.shape[:2] if im is not None else (self.imgsz, self.imgsz)
+
+    @staticmethod
+    def _read_mask_file(mask_path: str) -> np.ndarray | None:
+        """Read a semantic mask from disk."""
+        if not os.path.exists(mask_path):
+            return None
+        try:
+            with Image.open(mask_path) as im:
+                return np.array(im, dtype=np.uint8)
+        except Exception:
+            return cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+
+    def load_mask(self, index: int, image_shape: tuple[int, int] | None = None) -> np.ndarray:
+        """Load and map a semantic mask from source mask file."""
+        mask = self._read_mask_file(self.mask_files[index])
+        if mask is None:
+            h, w = self._fallback_mask_shape(index, image_shape=image_shape)
+            return np.full((h, w), self.ignore_label, dtype=np.uint8)
+        if self.label_mapping:
+            mask = self.convert_label(mask, inverse=False)
+        return mask.astype(np.uint8, copy=False)
+
+    def cache_masks_to_disk(self, i: int) -> None:
+        """Save a semantic mask as an uncompressed *.npy file for faster loading."""
+        fn = self.mask_npy_files[i]
+        if fn.exists() or not fn.parent.exists() or not os.access(fn.parent, os.W_OK):
+            return
+        np.save(fn.as_posix(), self.load_mask(i), allow_pickle=False)
+
+    def cache_images(self) -> None:
+        """Cache images and semantic masks to memory or disk."""
+        super().cache_images()  # image cache from BaseDataset
+        if self.cache not in {"ram", "disk"}:
+            return
+
+        b, gb = 0, 1 << 30
+        fcn, storage = (self.cache_masks_to_disk, "Disk") if self.cache == "disk" else (self.load_mask, "RAM")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, range(self.ni))
+            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
+            for i, x in pbar:
+                if self.cache == "disk":
+                    if self.mask_npy_files[i].exists():
+                        b += self.mask_npy_files[i].stat().st_size
+                else:
+                    self.mask_ims[i] = x
+                    b += x.nbytes
+                pbar.desc = f"{self.prefix}Caching semantic masks ({b / gb:.1f}GB {storage})"
+            pbar.close()
+
+    def check_cache_disk(self, safety_margin: float = 0.5) -> bool:
+        """Check if there's enough disk space for image + mask caching."""
+        import shutil
+
+        b, gb = 0, 1 << 30
+        n = min(self.ni, 30)
+        for _ in range(n):
+            i = random.randint(0, self.ni - 1)
+            im_file, mask_file = self.im_files[i], self.mask_files[i]
+
+            im = imread(im_file, flags=self.cv2_flag)
+            if im is not None:
+                b += im.nbytes
+            else:
+                continue
+
+            mask = self._read_mask_file(mask_file)
+            if mask is not None:
+                b += mask.nbytes
+            else:
+                h, w = self._fallback_mask_shape(i)
+                b += h * w
+
+            if not os.access(Path(im_file).parent, os.W_OK):
+                self.cache = None
+                LOGGER.warning(f"{self.prefix}Skipping caching images to disk, directory not writable")
+                return False
+            mask_parent = Path(mask_file).parent
+            if mask_parent.exists() and not os.access(mask_parent, os.W_OK):
+                self.cache = None
+                LOGGER.warning(f"{self.prefix}Skipping caching masks to disk, directory not writable: {mask_parent}")
+                return False
+
+        disk_required = b * self.ni / n * (1 + safety_margin)
+        total, _used, free = shutil.disk_usage(Path(self.im_files[0]).parent)
+        if disk_required > free:
+            self.cache = None
+            LOGGER.warning(
+                f"{self.prefix}{disk_required / gb:.1f}GB disk space required for image+mask caching, "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{free / gb:.1f}/{total / gb:.1f}GB free, not caching"
+            )
+            return False
+        return True
+
+    def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
+        """Check if there's enough RAM for image + mask caching."""
+        b, gb = 0, 1 << 30
+        n = min(self.ni, 30)
+        for _ in range(n):
+            i = random.randint(0, self.ni - 1)
+            im = imread(self.im_files[i], flags=self.cv2_flag)
+            if im is None:
+                continue
+            b += im.nbytes  # images are stored at original size (no pre-resize)
+
+            mask = self._read_mask_file(self.mask_files[i])
+            if mask is not None:
+                b += mask.nbytes
+            else:
+                h, w = self._fallback_mask_shape(i)
+                b += h * w
+
+        mem_required = b * self.ni / n * (1 + safety_margin)
+        mem = __import__("psutil").virtual_memory()
+        if mem_required > mem.available:
+            self.cache = None
+            LOGGER.warning(
+                f"{self.prefix}{mem_required / gb:.1f}GB RAM required to cache images+masks "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching"
+            )
+            return False
+        return True
+
+    def update_labels_info(self, label):
+        """Update label info — minimal for semantic segmentation.
+
+        Args:
+            label (dict): Label dictionary.
+
+        Returns:
+            (dict): Updated label with Instances object.
+        """
+        from ultralytics.utils.instance import Instances
+
+        bboxes = label.pop("bboxes", np.zeros((0, 4), dtype=np.float32))
+        label.pop("segments", None)
+        label["instances"] = Instances(
+            bboxes, segments=np.zeros((0, 0, 2), dtype=np.float32), bbox_format="xywh", normalized=True
+        )
+        return label
+
+    def build_transforms(self, hyp=None):
+        """Build transforms for semantic segmentation.
+
+        Args:
+            hyp (dict): Hyperparameters.
+
+        Returns:
+            (Compose): Composed transforms.
+        """
+        transforms = []
+        nc = self.data.get("nc", len(self.data.get("names", [])))
+        if self.augment:
+            crop_size = self.data.get("crop_size", 512)
+            transforms.append(SemsegRandomScale(scale_min=0.5, scale_max=2.0))
+            transforms.append(SemsegRandomCrop(crop_size=crop_size, ignore_label=255 if nc > 1 else 0))
+            transforms.append(RandomFlip(p=0.5, direction="horizontal"))
+            transforms.append(PhotoMetricDistortion(        
+                brightness_delta=12,
+                contrast_range=(0.85, 1.15),
+                saturation_range=(0.85, 1.15),
+                hue_delta=0,
+                ))
+        else:
+            transforms.append(LetterBox(auto=False, scaleup=False, center=False, stride=self.stride, ignore_label=255 if nc > 1 else 0))
+        transforms.append(SemanticFormat())
+        return Compose(transforms)
+
+    def close_mosaic(self, hyp) -> None:
+        """Disable mosaic augmentation and rebuild transforms."""
+        hyp.mosaic = 0.0
+        self.transforms = self.build_transforms(hyp)
+
+    def convert_label(self, label, inverse=False):
+        temp = label.copy()
+        if inverse:
+            for v, k in self.label_mapping.items():
+                label[temp == k] = v
+        else:
+            for k, v in self.label_mapping.items():
+                label[temp == k] = v
+        return label
+
+    def _load_semantic_mask(self, index, image_shape: tuple[int, int] | None = None):
+        """Load semantic mask for the given index.
+
+        Args:
+            index (int): Dataset index.
+
+        Returns:
+            (np.ndarray): Semantic mask array (H, W) with class IDs, 255 for ignore.
+        """
+        mask = None
+        if self.cache == "ram":
+            mask = self.mask_ims[index]
+            if mask is None:
+                mask = self.load_mask(index, image_shape=image_shape)
+                self.mask_ims[index] = mask
+            return mask
+
+        fn = self.mask_npy_files[index]
+        if fn.exists():
+            try:
+                mask = np.load(fn)
+            except Exception as e:
+                LOGGER.warning(f"{self.prefix}Removing corrupt mask *.npy file {fn} due to: {e}")
+                fn.unlink(missing_ok=True)
+        if mask is None:
+            mask = self.load_mask(index, image_shape=image_shape)
+        return mask
+
+    def get_image_and_label(self, index):
+        """Get image, label and semantic mask for the given index.
+
+        Overrides parent to include semantic mask so that Mosaic/CopyPaste mix images
+        also have their masks loaded.
+
+        Args:
+            index (int): Dataset index.
+
+        Returns:
+            (dict): Label dict with 'img', 'semantic_mask', and metadata.
+        """
+        label = super().get_image_and_label(index)
+        h, w = label["img"].shape[:2]
+        mask = self._load_semantic_mask(index, image_shape=(h, w))
+        # Resize mask to match the resized image dimensions
+        if mask.shape[:2] != (h, w):
+            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        label["semantic_mask"] = mask
+        return label
+
+    def __getitem__(self, index):
+        """Return transformed image and semantic mask for the given index.
+
+        Args:
+            index (int): Dataset index.
+
+        Returns:
+            (dict): Dictionary with 'img' tensor and 'semantic_mask' tensor.
+        """
+        label = self.get_image_and_label(index)
+        label = self.transforms(label)
+        return label
+
+    @staticmethod
+    def collate_fn(batch):
+        """Collate semantic segmentation batch into tensors.
+
+        Args:
+            batch (list[dict]): List of sample dictionaries.
+
+        Returns:
+            (dict): Collated batch with stacked tensors.
+        """
+        new_batch = {}
+        # Only collate keys that all samples share (mosaic vs non-mosaic may differ)
+        keys = set(batch[0].keys())
+        for b in batch[1:]:
+            keys &= set(b.keys())
+        for k in keys:
+            values = [b[k] for b in batch]
+            if k in {"img", "semantic_mask"}:
+                new_batch[k] = torch.stack(values, 0)
+            else:
+                new_batch[k] = values
+        # Add empty cls tensor for compatibility with BaseTrainer progress logging
+        new_batch["cls"] = torch.zeros(len(batch))
+        return new_batch
+
+
+class SemanticFormat:
+    """Format transform for semantic segmentation that converts images and masks to tensors.
+
+    This transform handles the letterboxed semantic mask by resizing it to match the image dimensions
+    and converts both to the appropriate tensor formats.
+    """
+
+    def __call__(self, labels):
+        """Apply formatting to semantic segmentation labels.
+
+        Args:
+            labels (dict): Dictionary with 'img' (np.ndarray) and 'semantic_mask' (np.ndarray).
+
+        Returns:
+            (dict): Dictionary with 'img' as CHW float32 tensor and 'semantic_mask' as int64 tensor.
+        """
+        img = labels.get("img")
+        mask = labels.get("semantic_mask")
+
+        if img is not None:
+            h, w = img.shape[:2]
+
+            # Resize mask to match letterboxed image dimensions
+            if mask is not None and (mask.shape[0] != h or mask.shape[1] != w):
+                mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+            # Convert image: HWC -> CHW, BGR -> RGB, uint8 -> float32
+            img = np.ascontiguousarray(img.transpose(2, 0, 1)[::-1])  # BGR to RGB, HWC to CHW
+            labels["img"] = torch.from_numpy(img).float()
+        else:
+            labels["img"] = torch.zeros(3, 640, 640)
+
+        if mask is not None:
+            labels["semantic_mask"] = torch.from_numpy(mask.copy()).long()
+        else:
+            labels["semantic_mask"] = torch.full(labels["img"].shape[-2:], 255, dtype=torch.long)
+
+        # Remove keys not needed downstream
+        for k in ("instances", "cls", "resized_shape", "ori_shape", "ratio_pad"):
+            labels.pop(k, None)
+
+        return labels
 
 
 class ClassificationDataset:

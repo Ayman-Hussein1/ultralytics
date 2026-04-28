@@ -233,6 +233,7 @@ nav:
       - tasks/index.md
       - Detect: tasks/detect.md
       - Segment: tasks/segment.md
+      - Semantic: tasks/semseg.md
       - Classify: tasks/classify.md
       - Pose: tasks/pose.md
       - OBB: tasks/obb.md

@@ -274,7 +274,7 @@ class BaseTrainer:
         # Note: When training DOTA dataset, double batch size could get OOM on images with >2000 objects.
         self.test_loader = self.get_dataloader(
             self.data.get("val") or self.data.get("test"),
-            batch_size=batch_size if self.args.task == "obb" else batch_size * 2,
+            batch_size=batch_size if self.args.task in {"obb", "semseg"} else batch_size * 2,
             rank=LOCAL_RANK,
             mode="val",
         )
@@ -634,6 +634,8 @@ class BaseTrainer:
         if not all(torch.isfinite(v).all() for v in ema.state_dict().values() if isinstance(v, torch.Tensor)):
             LOGGER.warning(f"Skipping checkpoint save at epoch {self.epoch}: EMA contains NaN/Inf")
             return False
+        if hasattr(ema, "criterion"):
+            ema.criterion = None  # drop training-only loss state from checkpoints
 
         # Serialize ckpt to a byte buffer once (faster than repeated torch.save() calls)
         buffer = io.BytesIO()
@@ -897,15 +899,22 @@ class BaseTrainer:
                 ) from e
         self.resume = resume
 
+    @staticmethod
+    def _strip_criterion_state(state_dict):
+        """Remove training-only loss entries from a checkpoint model state_dict."""
+        return {k: v for k, v in state_dict.items() if not k.startswith("criterion.")}
+
     def _load_checkpoint_state(self, ckpt):
         """Load optimizer, scaler, EMA, and best_fitness from checkpoint."""
         if ckpt.get("optimizer") is not None:
             self.optimizer.load_state_dict(ckpt["optimizer"])
+        self._ensure_initial_lrs()
         if ckpt.get("scaler") is not None:
             self.scaler.load_state_dict(ckpt["scaler"])
         if self.ema and ckpt.get("ema"):
             self.ema = ModelEMA(self.model)  # validation with EMA creates inference tensors that can't be updated
-            self.ema.ema.load_state_dict(ckpt["ema"].float().state_dict())
+            ema_state = self._strip_criterion_state(ckpt["ema"].float().state_dict())
+            self.ema.ema.load_state_dict(ema_state, strict=False)
             self.ema.updates = ckpt["updates"]
         self.best_fitness = ckpt.get("best_fitness", 0.0)
 
@@ -933,10 +942,10 @@ class BaseTrainer:
         LOGGER.warning(f"{reason} detected (attempt {self.nan_recovery_attempts}/3), recovering from last.pt...")
         self._model_train()  # set model to train mode before loading checkpoint to avoid inference tensor errors
         _, ckpt = load_checkpoint(self.last)
-        ema_state = ckpt["ema"].float().state_dict()
+        ema_state = self._strip_criterion_state(ckpt["ema"].float().state_dict())
         if not all(torch.isfinite(v).all() for v in ema_state.values() if isinstance(v, torch.Tensor)):
             raise RuntimeError(f"Checkpoint {self.last} is corrupted with NaN/Inf weights")
-        unwrap_model(self.model).load_state_dict(ema_state)  # Load EMA weights into model
+        unwrap_model(self.model).load_state_dict(ema_state, strict=False)  # Load EMA weights into model
         self._load_checkpoint_state(ckpt)  # Load optimizer/scaler/EMA/best_fitness
         del ckpt, ema_state
         self.scheduler.last_epoch = epoch - 1
@@ -1044,7 +1053,7 @@ class BaseTrainer:
             import re
 
             # higher lr for certain parameters in MuSGD when funetuning
-            pattern = re.compile(r"(?=.*23)(?=.*cv3)|proto\.semseg")
+            pattern = re.compile(r"(?=.*23)(?=.*cv3)|proto\.semseg|SemanticSegment")
             g_ = []  # new param groups
             for x in g:
                 p = x.pop("params")

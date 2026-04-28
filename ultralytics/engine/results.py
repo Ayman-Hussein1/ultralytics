@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import torch
 
@@ -231,6 +232,7 @@ class Results(SimpleClass, DataExportMixin):
         keypoints: torch.Tensor | None = None,
         obb: torch.Tensor | None = None,
         speed: dict[str, float] | None = None,
+        semantic_mask: torch.Tensor | None = None,
     ) -> None:
         """Initialize the Results class for storing and manipulating inference results.
 
@@ -259,11 +261,12 @@ class Results(SimpleClass, DataExportMixin):
         self.probs = Probs(probs) if probs is not None else None
         self.keypoints = Keypoints(keypoints, self.orig_shape) if keypoints is not None else None
         self.obb = OBB(obb, self.orig_shape) if obb is not None else None
+        self.semantic_mask = semantic_mask  # [H, W] tensor of class IDs for semantic segmentation
         self.speed = speed if speed is not None else {"preprocess": None, "inference": None, "postprocess": None}
         self.names = names
         self.path = path
         self.save_dir = None
-        self._keys = "boxes", "masks", "probs", "keypoints", "obb"
+        self._keys = "boxes", "masks", "probs", "keypoints", "obb", "semantic_mask"
 
     def __getitem__(self, idx):
         """Return a Results object for a specific index of inference results.
@@ -557,6 +560,17 @@ class Results(SimpleClass, DataExportMixin):
             x = round(self.orig_shape[0] * 0.03)
             annotator.text([x, x], text, txt_color=txt_color, box_color=(64, 64, 64, 128))  # RGBA box
 
+        # Plot Semantic Segmentation results
+        if self.semantic_mask is not None and show_masks:
+            sem_mask = self.semantic_mask.cpu().numpy() if isinstance(self.semantic_mask, torch.Tensor) else self.semantic_mask
+            overlay = np.zeros_like(annotator.result())
+            for cls_id in np.unique(sem_mask):
+                if cls_id == 255:
+                    continue
+                color = colors(int(cls_id), True)
+                overlay[sem_mask == cls_id] = color
+            annotator.im = cv2.addWeighted(annotator.result(), 0.5, overlay, 0.5, 0)
+
         # Plot Pose results
         if self.keypoints is not None:
             for i, k in enumerate(reversed(self.keypoints.data)):
@@ -657,6 +671,8 @@ class Results(SimpleClass, DataExportMixin):
         if boxes:
             counts = boxes.cls.int().bincount()
             return "".join(f"{n} {self.names[i]}{'s' * (n > 1)}, " for i, n in enumerate(counts) if n > 0)
+        if self.semantic_mask is not None:
+            return ""
 
     def save_txt(self, txt_file: str | Path, save_conf: bool = False) -> str:
         """Save detection results to a text file.
