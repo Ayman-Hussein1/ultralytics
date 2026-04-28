@@ -67,6 +67,7 @@ class DeepXBackend(BaseBackend):
             else:
                 # x86-64 Linux: download and dpkg install NPU driver + libdxrt runtime from GitHub
                 LOGGER.info("DeepX runtime not found. Attempting to install NPU driver and libdxrt...")
+                check_apt_requirements(["dkms", "libncurses-dev"])  # build deps for the DKMS NPU driver module
                 with tempfile.TemporaryDirectory() as tmpdir:
                     install_deb(DRIVER_DEB_URL, Path(tmpdir), "NPU driver")
                     install_deb(RUNTIME_DEB_URL, Path(tmpdir), "runtime (libdxrt)")
