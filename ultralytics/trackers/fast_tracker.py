@@ -22,8 +22,9 @@ class FastSTrack(STrack):
     bounded regardless of track lifetime.
 
     Attributes:
-        mean_history (collections.deque): Bounded ring-buffer of recent Kalman mean vectors, newest last, capped at
-            ``history_len`` entries.
+        mean_history (collections.deque): Bounded ring-buffer of recent ``(mean, covariance)`` snapshots, newest last,
+            capped at ``history_len`` entries. Rolling back both together keeps the Kalman state internally consistent
+            when a track is restored after an occlusion gap.
         not_matched (int): Consecutive frames this track has failed to match a detection.
         is_occluded (bool): True while the track is hidden behind another target.
         occluded_len (int): Consecutive frames the track has been continuously occluded.
@@ -57,9 +58,9 @@ class FastSTrack(STrack):
         self.was_recently_occluded = False
 
     def _push_history(self):
-        """Append a copy of the current Kalman mean to the bounded history buffer."""
+        """Append `(mean, covariance)` copies of the current Kalman state to the bounded buffer."""
         if self.mean is not None:
-            self.mean_history.append(self.mean.copy())
+            self.mean_history.append((self.mean.copy(), self.covariance.copy()))
 
     def activate(self, kalman_filter, frame_id: int):
         """Activate the track and seed its mean history.
@@ -72,7 +73,7 @@ class FastSTrack(STrack):
         self._push_history()
 
     def re_activate(self, new_track, frame_id: int, new_id: bool = False):
-        """Re-activate a previously lost track.
+        """Re-activate a previously lost track and clear any stale occlusion bookkeeping.
 
         Args:
             new_track (FastSTrack): Detection used to revive this track.
@@ -80,6 +81,11 @@ class FastSTrack(STrack):
             new_id (bool): If True, assign a fresh track id instead of reusing the old one.
         """
         super().re_activate(new_track, frame_id, new_id=new_id)
+        self.is_occluded = False
+        self.occluded_len = 0
+        self.not_matched = 0
+        self.was_recently_occluded = False
+        self.last_occluded_frame = -1
         self._push_history()
 
     def update(self, new_track, frame_id: int):
@@ -259,23 +265,27 @@ class FASTTracker(BYTETracker):
             removed_stracks.append(track)
 
         # --- Init new tracks, suppressed by IoU against already-active tracks ---
-        # Keep a plain list of box rows and only stack when we need to compute IoU.
+        # Suppression pool includes both this-frame Tracked updates and re-found Lost tracks so
+        # a fresh detection that lands on a just-revived track doesn't spawn a duplicate ID.
+        # New tracks created in this loop are appended too, so they suppress each other.
         # Note: tracks confirmed for the first time this frame may have is_activated=False until
-        # they hit min_track_len, so they won't appear here. New spawns within this loop are
-        # appended below and will suppress each other regardless.
+        # they hit min_track_len; they won't appear here.
         active_boxes = [t.xyxy for t in activated_stracks if t.is_activated]
+        active_boxes.extend(t.xyxy for t in refind_stracks if t.is_activated)
         suppress_on = self.init_iou_suppress < 1.0
+        # Hoist the stack out of the loop; only restack when active_boxes grows.
+        active_stack = np.asarray(active_boxes, dtype=np.float32) if active_boxes else None
         for inew in u_detection:
             det = detections[inew]
             if det.score < self.args.new_track_thresh:
                 continue
-            if suppress_on and active_boxes:
-                stacked = np.asarray(active_boxes, dtype=np.float32)
-                if matching.iou_matrix(det.xyxy[None, :], stacked).max() >= self.init_iou_suppress:
+            if suppress_on and active_stack is not None:
+                if matching.iou_matrix(det.xyxy[None, :], active_stack).max() >= self.init_iou_suppress:
                     continue
             det.activate(self.kalman_filter, self.frame_id)
             activated_stracks.append(det)
             active_boxes.append(det.xyxy)
+            active_stack = np.asarray(active_boxes, dtype=np.float32)
 
         # --- Retire lost tracks, with grace window for recently-occluded ones ---
         for track in self.lost_stracks:
@@ -355,10 +365,16 @@ class FASTTracker(BYTETracker):
                 hist = track.mean_history
                 if track.mean is not None:
                     if len(hist) >= self.reset_velocity_offset_occ:
-                        track.mean[4:8] = hist[-self.reset_velocity_offset_occ][4:8]
+                        prev_mean, prev_cov = hist[-self.reset_velocity_offset_occ]
+                        track.mean[4:8] = prev_mean[4:8]
+                        # Roll covariance back along with velocity so the KF stays consistent.
+                        track.covariance = prev_cov.copy()
                     if len(hist) >= self.reset_pos_offset_occ:
-                        track.mean[0:4] = hist[-self.reset_pos_offset_occ][0:4]
-                    # Enlarge height once to expand search region.
+                        prev_mean, prev_cov = hist[-self.reset_pos_offset_occ]
+                        track.mean[0:4] = prev_mean[0:4]
+                        track.covariance = prev_cov.copy()
+                    # Enlarge height once to expand search region (XYAH state: a is held, so
+                    # scaling h proportionally scales w via w = a * h).
                     track.mean[3] *= self.enlarge_bbox_occ
                     track.mean[4:8] *= self.dampen_motion_occ
             elif track.is_occluded:
