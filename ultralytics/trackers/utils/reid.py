@@ -2,8 +2,8 @@
 
 """Shared ReID encoder used by BoT-SORT, Deep OC-SORT, and TrackTrack.
 
-Accepts a TorchScript embedding model (preferred) or a YOLO .pt checkpoint
-(legacy YOLO-predictor path). Returns one normalized embedding per detection.
+Wraps `AutoBackend` so the model can be a TorchScript / ONNX / TensorRT / OpenVINO export and
+the same code path serves all of them. Output is a normalized embedding per detection crop.
 """
 
 from __future__ import annotations
@@ -11,32 +11,27 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.utils.ops import xywh2xyxy
 from ultralytics.utils.plotting import save_one_box
 
 
 class ReID:
-    """ReID encoder. Loads a TorchScript embedding model, or falls back to a YOLO checkpoint."""
+    """ReID encoder backed by `AutoBackend` (TorchScript / ONNX / TensorRT / etc.)."""
 
-    def __init__(self, model: str, imgsz: int = 224, device: str | torch.device | None = None):
+    def __init__(self, model: str, imgsz: int = 224, device: str | torch.device | None = None, fp16: bool = False):
         """Initialize encoder for re-identification.
 
         Args:
-            model (str): Path to a TorchScript (.torchscript) reid model, or a YOLO .pt checkpoint.
-            imgsz (int): Square input size used by the TorchScript model.
-            device (str | torch.device | None): Device for inference; defaults to CUDA if available.
+            model (str): Path to an exported ReID model that outputs an embedding tensor.
+            imgsz (int): Square input size used for crop preprocessing.
+            device (str | torch.device | None): Inference device; defaults to CUDA if available.
+            fp16 (bool): Use half precision when the backend supports it.
         """
         self.imgsz = imgsz
         self.device = torch.device(device) if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.is_torchscript = str(model).endswith(".torchscript")
-
-        if self.is_torchscript:
-            self.model = torch.jit.load(str(model), map_location=self.device).eval()
-        else:
-            from ultralytics import YOLO
-
-            self.model = YOLO(model)
-            self.model(embed=[len(self.model.model.model) - 2 if ".pt" in model else -1], verbose=False, save=False)
+        self.model = AutoBackend(str(model), device=self.device, fp16=fp16, verbose=False)
+        self.fp16 = self.model.fp16
 
     def _crops_to_tensor(self, img: np.ndarray, dets: np.ndarray) -> torch.Tensor:
         """Crop detections from img and stack into a normalized BCHW float tensor at self.imgsz."""
@@ -46,18 +41,11 @@ class ReID:
         for i, c in enumerate(crops):
             t = torch.from_numpy(np.ascontiguousarray(c[..., ::-1])).permute(2, 0, 1).unsqueeze(0).float() / 255.0
             batch[i] = torch.nn.functional.interpolate(t, size=(size, size), mode="bilinear", align_corners=False)[0]
-        return batch.to(self.device)
+        batch = batch.to(self.device)
+        return batch.half() if self.fp16 else batch
 
+    @torch.inference_mode()
     def __call__(self, img: np.ndarray, dets: np.ndarray) -> list[np.ndarray]:
         """Extract embeddings for detected objects."""
-        if self.is_torchscript:
-            with torch.inference_mode():
-                feats = self.model(self._crops_to_tensor(img, dets))
-            return [f.cpu().numpy() for f in feats]
-
-        feats = self.model.predictor(
-            [save_one_box(det, img, save=False) for det in xywh2xyxy(torch.from_numpy(dets[:, :4]))]
-        )
-        if len(feats) != dets.shape[0] and feats[0].shape[0] == dets.shape[0]:
-            feats = feats[0]  # batched prediction with non-PyTorch backend
+        feats = self.model(self._crops_to_tensor(img, dets))
         return [f.cpu().numpy() for f in feats]
