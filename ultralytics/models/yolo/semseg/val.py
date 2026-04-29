@@ -128,10 +128,10 @@ class SemanticSegmentationValidator(BaseValidator):
         """Reduce semantic confusion matrix to rank 0 during DDP validation."""
         if RANK == -1 or not dist.is_available() or not dist.is_initialized():
             return
-        if self.metrics.confusion_matrix is None:
+        if self.metrics.confusion_matrix.matrix is None:
             cm_nc = self.metrics.cm_nc
-            self.metrics.confusion_matrix = torch.zeros((cm_nc, cm_nc), device=self.device, dtype=torch.int64)
-        dist.reduce(self.metrics.confusion_matrix, dst=0, op=dist.ReduceOp.SUM)
+            self.metrics.confusion_matrix.matrix = torch.zeros((cm_nc, cm_nc), device=self.device, dtype=torch.int64)
+        dist.reduce(self.metrics.confusion_matrix.matrix, dst=0, op=dist.ReduceOp.SUM)
 
     def save_pred_masks(self, preds: torch.Tensor, batch: dict[str, Any]) -> None:
         """Save semantic predictions as single-channel PNG masks."""

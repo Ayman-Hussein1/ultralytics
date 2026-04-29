@@ -1623,6 +1623,47 @@ class OBBMetrics(DetMetrics):
         DetMetrics.__init__(self, names)
 
 
+class SemsegConfusionMatrix(DataExportMixin):
+    """Confusion matrix wrapper for semantic segmentation, exposing export methods via DataExportMixin.
+
+    Attributes:
+        matrix (torch.Tensor | None): Accumulated confusion matrix of shape (cm_nc, cm_nc).
+        names (dict[int, str]): Class names mapping.
+        nc (int): Number of classes.
+        cm_nc (int): Confusion matrix side length (2 for binary segmentation, else nc).
+        task (str): Task type identifier, fixed to "semseg".
+    """
+
+    def __init__(self, names: dict | None = None):
+        """Initialize the wrapper.
+
+        Args:
+            names (dict, optional): Dictionary mapping class indices to names.
+        """
+        self.names = names or {}
+        self.nc = len(self.names)
+        self.cm_nc = 2 if self.nc == 1 else self.nc
+        self.matrix: torch.Tensor | None = None
+        self.task = "semseg"
+
+    def summary(self, normalize: bool = False, decimals: int = 5) -> list[dict[str, float]]:
+        """Return the confusion matrix as a list of per-row dictionaries (predicted x actual)."""
+        if self.matrix is None:
+            return []
+        names = list(self.names.values()) if self.nc != 1 else ["background", next(iter(self.names.values()), "1")]
+        if len(names) < self.cm_nc:
+            names = names + [str(i) for i in range(len(names), self.cm_nc)]
+        # Internal layout is matrix[gt, pred] (see SemsegMetrics.process); transpose so row index matches "Predicted".
+        array = self.matrix.detach().cpu().numpy().astype(float).T
+        if normalize:
+            array = array / (array.sum(axis=0, keepdims=True) + 1e-9)
+        array = array.round(decimals)
+        return [
+            dict({"Predicted": names[i]}, **{names[j]: float(array[i, j]) for j in range(self.cm_nc)})
+            for i in range(self.cm_nc)
+        ]
+
+
 class SemsegMetrics(SimpleClass, DataExportMixin):
     """Metrics for semantic segmentation: mIoU, pixel accuracy, per-class IoU.
 
@@ -1631,7 +1672,7 @@ class SemsegMetrics(SimpleClass, DataExportMixin):
         nc (int): Number of classes.
         device (torch.device | None): Device used for confusion matrix accumulation.
         ignore_index (int): Label value to ignore during metric accumulation.
-        confusion_matrix (torch.Tensor | None): Accumulated confusion matrix of shape (nc, nc).
+        confusion_matrix (SemsegConfusionMatrix): Confusion matrix wrapper with export methods.
         speed (dict): Processing speed statistics.
         task (str): Task type identifier.
     """
@@ -1647,7 +1688,7 @@ class SemsegMetrics(SimpleClass, DataExportMixin):
         self.nc = len(self.names)
         self.cm_nc = 2 if self.nc == 1 else self.nc
         self.device = torch.device(device) if device is not None else None
-        self.confusion_matrix = None
+        self.confusion_matrix = SemsegConfusionMatrix(names=self.names)
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
 
     def process(self, preds, targets):
@@ -1665,12 +1706,14 @@ class SemsegMetrics(SimpleClass, DataExportMixin):
         if not isinstance(targets, torch.Tensor):
             targets = torch.as_tensor(targets, device=self.device)
 
-        metric_device = self.confusion_matrix.device if self.confusion_matrix is not None else (self.device or preds.device)
+        cm = self.confusion_matrix.matrix
+        metric_device = cm.device if cm is not None else (self.device or preds.device)
         self.device = metric_device
         preds = preds.to(metric_device, non_blocking=True).long()
         targets = targets.to(metric_device, non_blocking=True).long()
-        if self.confusion_matrix is None:
-            self.confusion_matrix = torch.zeros((self.cm_nc, self.cm_nc), device=metric_device, dtype=torch.int64)
+        if cm is None:
+            cm = torch.zeros((self.cm_nc, self.cm_nc), device=metric_device, dtype=torch.int64)
+            self.confusion_matrix.matrix = cm
 
         valid = (
             (targets != 255)
@@ -1682,13 +1725,14 @@ class SemsegMetrics(SimpleClass, DataExportMixin):
         hist = torch.bincount(
             self.cm_nc * targets[valid] + preds[valid], minlength=self.cm_nc**2
         ).reshape(self.cm_nc, self.cm_nc)
-        self.confusion_matrix += hist.to(self.confusion_matrix.dtype)
+        cm += hist.to(cm.dtype)
 
     def _compute_iou(self) -> torch.Tensor | None:
         """Compute per-class IoU tensor on the confusion matrix device."""
-        if self.confusion_matrix is None:
+        cm = self.confusion_matrix.matrix
+        if cm is None:
             return None
-        confusion_matrix = self.confusion_matrix.to(torch.float64)
+        confusion_matrix = cm.to(torch.float64)
         intersection = torch.diagonal(confusion_matrix)
         union = confusion_matrix.sum(1) + confusion_matrix.sum(0) - intersection
         return intersection / (union + 1e-10)
@@ -1706,9 +1750,10 @@ class SemsegMetrics(SimpleClass, DataExportMixin):
     @property
     def pixel_accuracy(self):
         """Compute overall pixel accuracy."""
-        if self.confusion_matrix is None:
+        cm = self.confusion_matrix.matrix
+        if cm is None:
             return 0.0
-        confusion_matrix = self.confusion_matrix.to(torch.float64)
+        confusion_matrix = cm.to(torch.float64)
         return float((torch.diagonal(confusion_matrix).sum() / (confusion_matrix.sum() + 1e-10)).item())
 
     @property
@@ -1749,3 +1794,27 @@ class SemsegMetrics(SimpleClass, DataExportMixin):
     def curves_results(self):
         """Return empty list (no PR curve results)."""
         return []
+
+    def summary(self, normalize: bool = True, decimals: int = 5) -> list[dict[str, Any]]:
+        """Generate a per-class summary of semantic segmentation metrics, with global mIoU and pixel accuracy on each row.
+
+        Args:
+            normalize (bool): For semseg metrics, values are already in [0, 1].
+            decimals (int): Number of decimal places to round the metric values to.
+
+        Returns:
+            (list[dict[str, Any]]): A list of dictionaries, one per class, with per-class IoU and shared scalars.
+        """
+        miou = round(self.miou, decimals)
+        pixel_acc = round(self.pixel_accuracy, decimals)
+        per_class = self.per_class_iou
+        names = self.names or {i: str(i) for i in range(len(per_class))}
+        return [
+            {
+                "Class": names.get(i, str(i)),
+                "IoU": round(float(per_class[i]), decimals),
+                "mIoU": miou,
+                "pixel_acc": pixel_acc,
+            }
+            for i in range(len(per_class))
+        ]
