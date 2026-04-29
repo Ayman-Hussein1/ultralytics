@@ -158,16 +158,15 @@ def iou_matrix(boxes_a: np.ndarray, boxes_b: np.ndarray) -> np.ndarray:
 def coverage_matrix(boxes_a: np.ndarray, boxes_b: np.ndarray) -> np.ndarray:
     """Compute the asymmetric coverage matrix `intersection(a, b) / area(a)`.
 
-    Preferred over IoU for occlusion detection: a small box hidden behind a large one has high
-    coverage from the small box's side but potentially low IoU.
+    Preferred over IoU for occlusion detection: a small box hidden behind a large one has high coverage from the small
+    box's side but potentially low IoU.
 
     Args:
         boxes_a (np.ndarray): `(N, 4)` xyxy boxes — candidates for being covered.
         boxes_b (np.ndarray): `(M, 4)` xyxy boxes — candidate occluders.
 
     Returns:
-        (np.ndarray): Float32 `(N, M)` matrix where entry `[i, j]` equals
-            `intersection(a_i, b_j) / area(a_i)`.
+        (np.ndarray): Float32 `(N, M)` matrix where entry `[i, j]` equals `intersection(a_i, b_j) / area(a_i)`.
     """
     if boxes_a.size == 0 or boxes_b.size == 0:
         return np.zeros((len(boxes_a), len(boxes_b)), dtype=np.float32)

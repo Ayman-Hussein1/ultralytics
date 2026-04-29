@@ -228,5 +228,3 @@ class BOTSORT(BYTETracker):
         """Reset the BOTSORT tracker to its initial state, clearing all tracked objects and internal states."""
         super().reset()
         self.gmc.reset_params()
-
-

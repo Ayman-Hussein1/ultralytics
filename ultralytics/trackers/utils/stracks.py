@@ -1,5 +1,4 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 """Shared helpers for operating on lists of track objects across trackers.
 
 These functions are intentionally generic: they only touch attributes that every track
@@ -24,13 +23,13 @@ def merge_track_pools(
 ) -> None:
     """Apply the standard end-of-frame bookkeeping to a tracker's persistent pools in place.
 
-    Merges newly activated and re-found tracks into `tracker.tracked_stracks`, moves the
-    transitioned tracks into `tracker.lost_stracks`, dedups by IoU, appends removals to
-    `tracker.removed_stracks`, and trims the removed buffer to `removed_buffer` entries.
+    Merges newly activated and re-found tracks into `tracker.tracked_stracks`, moves the transitioned tracks into
+    `tracker.lost_stracks`, dedups by IoU, appends removals to `tracker.removed_stracks`, and trims the removed buffer
+    to `removed_buffer` entries.
 
     Args:
-        tracker: Object exposing `tracked_stracks`, `lost_stracks`, `removed_stracks` lists,
-            plus the `joint_stracks` / `sub_stracks` / `remove_duplicate_stracks` helpers.
+        tracker: Object exposing `tracked_stracks`, `lost_stracks`, `removed_stracks` lists, plus the `joint_stracks` /
+            `sub_stracks` / `remove_duplicate_stracks` helpers.
         activated (list): Tracks updated from the Tracked state this frame.
         refind (list): Tracks re-activated from the Lost state this frame.
         lost (list): Tracks transitioned to Lost this frame.
@@ -108,8 +107,7 @@ def remove_duplicate_stracks(atracks: list, btracks: list) -> tuple[list, list]:
     from `atracks`.
 
     Args:
-        atracks (list[STrack]): First list of tracks; entries must expose `xyxy`, `frame_id`,
-            and `start_frame`.
+        atracks (list[STrack]): First list of tracks; entries must expose `xyxy`, `frame_id`, and `start_frame`.
         btracks (list[STrack]): Second list of tracks with the same attribute requirements.
 
     Returns:
@@ -138,13 +136,12 @@ def remove_duplicate_stracks(atracks: list, btracks: list) -> tuple[list, list]:
 def multi_gmc(stracks: list, H: np.ndarray = np.eye(2, 3)) -> None:
     """Update multiple track positions and covariances using a 2x3 affine homography.
 
-    The Kalman state is assumed to be laid out as `(*box, *box_velocity)` with the box
-    center `(x, y)` in the first two dims. `R8x8` rotates all four 2-d pairs block-
-    diagonally; the translation `t` is applied only to the position.
+    The Kalman state is assumed to be laid out as `(*box, *box_velocity)` with the box center `(x, y)` in the first two
+    dims. `R8x8` rotates all four 2-d pairs block- diagonally; the translation `t` is applied only to the position.
 
     Args:
-        stracks (list[STrack]): Tracks to warp in place; each must expose `mean` (shape (8,))
-            and `covariance` (shape (8, 8)).
+        stracks (list[STrack]): Tracks to warp in place; each must expose `mean` (shape (8,)) and `covariance` (shape
+            (8, 8)).
         H (np.ndarray): 2x3 affine homography mapping the previous frame to the current one.
 
     Examples:

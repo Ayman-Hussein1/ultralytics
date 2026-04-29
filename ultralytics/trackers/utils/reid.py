@@ -1,5 +1,4 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 """Shared ReID encoder used by BoT-SORT, Deep OC-SORT, and TrackTrack.
 
 Wraps `AutoBackend` so the model can be a TorchScript / ONNX / TensorRT / OpenVINO export and
@@ -29,7 +28,9 @@ class ReID:
             fp16 (bool): Use half precision when the backend supports it.
         """
         self.imgsz = imgsz
-        self.device = torch.device(device) if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = (
+            torch.device(device) if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
         self.model = AutoBackend(str(model), device=self.device, fp16=fp16, verbose=False)
         self.fp16 = self.model.fp16
 

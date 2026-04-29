@@ -17,8 +17,8 @@ from .utils.reid import ReID
 class DeepOCSortTrack(OCSortTrack):
     """Track object for Deep OC-SORT with appearance features and observation-centric state management.
 
-    Extends OCSortTrack with ReID embedding storage and exponential moving average smoothing,
-    plus confidence-adaptive embedding update rates.
+    Extends OCSortTrack with ReID embedding storage and exponential moving average smoothing, plus confidence-adaptive
+    embedding update rates.
 
     Attributes:
         smooth_feat (np.ndarray | None): Smoothed feature vector via EMA.
@@ -48,8 +48,8 @@ class DeepOCSortTrack(OCSortTrack):
             delta_t (int): Temporal window for OCM velocity direction computation.
             feat (np.ndarray | None): Optional appearance feature vector for this detection.
             alpha_fixed_emb (float): Base EMA factor for embedding updates; higher = slower updates.
-            det_thresh (float): Detection-confidence threshold below which the embedding is
-                replaced rather than blended.
+            det_thresh (float): Detection-confidence threshold below which the embedding is replaced rather than
+                blended.
         """
         super().__init__(xywh, score, cls, delta_t)
         self.smooth_feat = None
@@ -130,8 +130,8 @@ class DeepOCSortTrack(OCSortTrack):
 
         # Build 8x8 transform: rotate (x,y) and (vx,vy), identity for (a,h) and (va,vh)
         R8x8 = np.eye(8, dtype=float)
-        R8x8[:2, :2] = R       # rotate position (x, y)
-        R8x8[4:6, 4:6] = R     # rotate velocity (vx, vy)
+        R8x8[:2, :2] = R  # rotate position (x, y)
+        R8x8[4:6, 4:6] = R  # rotate velocity (vx, vy)
         # indices 2,3 (a,h) and 6,7 (va,vh) remain identity
 
         for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
@@ -148,10 +148,15 @@ class DeepOCSortTrack(OCSortTrack):
                 cx, cy = (obs[0] + obs[2]) / 2, (obs[1] + obs[3]) / 2
                 w, h = obs[2] - obs[0], obs[3] - obs[1]
                 new_c = R @ np.array([cx, cy]) + t
-                stracks[i].last_observation = np.array([
-                    new_c[0] - w / 2, new_c[1] - h / 2,
-                    new_c[0] + w / 2, new_c[1] + h / 2,
-                ], dtype=np.float32)
+                stracks[i].last_observation = np.array(
+                    [
+                        new_c[0] - w / 2,
+                        new_c[1] - h / 2,
+                        new_c[0] + w / 2,
+                        new_c[1] + h / 2,
+                    ],
+                    dtype=np.float32,
+                )
 
 
 class DeepOCSORT(OCSORT):
@@ -168,9 +173,8 @@ class DeepOCSORT(OCSORT):
         """Initialize Deep OC-SORT tracker.
 
         Args:
-            args (Namespace | IterableSimpleNamespace): Parsed tracker config providing the
-                OC-SORT keys plus `gmc_method`, `proximity_thresh`, `appearance_thresh`,
-                `alpha_fixed_emb`, `with_reid`, and `model`.
+            args (Namespace | IterableSimpleNamespace): Parsed tracker config providing the OC-SORT keys plus
+                `gmc_method`, `proximity_thresh`, `appearance_thresh`, `alpha_fixed_emb`, `with_reid`, and `model`.
             frame_rate (int): Source video frame rate.
         """
         super().__init__(args, frame_rate)
@@ -203,8 +207,8 @@ class DeepOCSORT(OCSORT):
 
         Args:
             results: Object exposing `xywh` (or `xywhr`), `conf`, and `cls`.
-            img (np.ndarray | None): Either the BGR frame or pre-extracted feature tensors,
-                depending on the ReID configuration.
+            img (np.ndarray | None): Either the BGR frame or pre-extracted feature tensors, depending on the ReID
+                configuration.
 
         Returns:
             (list[DeepOCSortTrack]): One track per detection, empty if no detections.
@@ -218,7 +222,11 @@ class DeepOCSORT(OCSORT):
             features = self.encoder(img, bboxes)
             return [
                 DeepOCSortTrack(
-                    xywh, s, c, self.delta_t, feat=f,
+                    xywh,
+                    s,
+                    c,
+                    self.delta_t,
+                    feat=f,
                     alpha_fixed_emb=self.alpha_fixed_emb,
                     det_thresh=self.args.track_high_thresh,
                 )

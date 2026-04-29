@@ -1,5 +1,4 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 """TrackTrack: Track-focused online multi-object tracker.
 
 Reference: Shim et al., "Focusing on Tracks for Online Multi-Object Tracking" (CVPR 2025).
@@ -39,9 +38,9 @@ def _nsa_kalman_update(
 ) -> tuple[np.ndarray, np.ndarray]:
     """NSA-Kalman update (StrongSORT): scale the measurement noise R by (1 - confidence).
 
-    High-confidence detections pull the state estimate harder toward the observation; low-
-    confidence ones have less influence. Only R is scaled, not the projected state covariance
-    H P H^T, so we recompute the projection locally instead of calling `kf.project`.
+    High-confidence detections pull the state estimate harder toward the observation; low- confidence ones have less
+    influence. Only R is scaled, not the projected state covariance H P H^T, so we recompute the projection locally
+    instead of calling `kf.project`.
 
     Confidence is clamped to avoid collapsing R to zero (would break Cholesky).
     """
@@ -63,8 +62,8 @@ def _nsa_kalman_update(
 def _hmiou_distance(a_tracks: list, b_tracks: list) -> tuple[np.ndarray, np.ndarray]:
     """HMIoU = HIoU * IoU, where HIoU is vertical-overlap / vertical-union. Returns (iou_sim, 1-HMIoU).
 
-    The height modifier improves matching when detections with similar aspect ratios are stacked
-    vertically (common for pedestrians).
+    The height modifier improves matching when detections with similar aspect ratios are stacked vertically (common for
+    pedestrians).
     """
     n, m = len(a_tracks), len(b_tracks)
     if n == 0 or m == 0:
@@ -81,9 +80,9 @@ def _hmiou_distance(a_tracks: list, b_tracks: list) -> tuple[np.ndarray, np.ndar
 def _angle_distance(tracks: list, dets: list, frame_id: int, delta_t: int = 3) -> np.ndarray:
     """Angle distance between each track's corner velocities and the track-to-detection direction.
 
-    For each (track, detection) pair the per-corner direction is computed from the track's box at
-    frame_id - delta_t to the detection, then compared via arccos of the dot product with the
-    track's stored corner velocity. Averaged over 4 corners and weighted by detection score.
+    For each (track, detection) pair the per-corner direction is computed from the track's box at frame_id - delta_t to
+    the detection, then compared via arccos of the dot product with the track's stored corner velocity. Averaged over 4
+    corners and weighted by detection score.
     """
     n, m = len(tracks), len(dets)
     if n == 0 or m == 0:
@@ -184,8 +183,8 @@ def attach_raw_preds_hook(predictor) -> None:
 def compute_dets_del(predictor) -> list | None:
     """Run a loose IoU=0.95 NMS on the captured raw preds and return detections the tight NMS dropped.
 
-    Returns per-batch `(xywh, conf, cls)` tuples (or None where no deleted detections are found),
-    or None if no raw preds were captured. Consumes `_raw_preds` (clears it on the predictor).
+    Returns per-batch `(xywh, conf, cls)` tuples (or None where no deleted detections are found), or None if no raw
+    preds were captured. Consumes `_raw_preds` (clears it on the predictor).
     """
     raw = getattr(predictor, "_raw_preds", None)
     if raw is None:
@@ -446,10 +445,9 @@ class TTSTrack(BaseTrack):
 class TRACKTRACK:
     """TrackTrack: multi-object tracker based on Track-Perspective Association and Track-Aware Init.
 
-    Implements the full algorithm from Shim et al. (CVPR 2025): partitions detections into high,
-    low, and deleted (loose-NMS recovered) sets; builds a multi-cue cost matrix (HMIoU + cosine
-    ReID + confidence + angle); solves with iterative assignment; then runs TAI NMS on leftover
-    high-confidence detections before spawning new tracks.
+    Implements the full algorithm from Shim et al. (CVPR 2025): partitions detections into high, low, and deleted
+    (loose-NMS recovered) sets; builds a multi-cue cost matrix (HMIoU + cosine ReID + confidence + angle); solves with
+    iterative assignment; then runs TAI NMS on leftover high-confidence detections before spawning new tracks.
 
     Examples:
         Initialize and run on a single frame

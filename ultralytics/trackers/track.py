@@ -30,8 +30,7 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
     """Initialize trackers for object tracking during prediction.
 
     Args:
-        predictor (ultralytics.engine.predictor.BasePredictor): The predictor object to initialize
-            trackers for.
+        predictor (ultralytics.engine.predictor.BasePredictor): The predictor object to initialize trackers for.
         persist (bool, optional): Whether to reuse existing trackers if they are already attached.
 
     Examples:
@@ -48,11 +47,8 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
     tracker = check_yaml(predictor.args.tracker)
     cfg = IterableSimpleNamespace(**YAML.load(tracker))
 
-
     if cfg.tracker_type not in TRACKER_MAP:
-        raise AssertionError(
-            f"Only {sorted(TRACKER_MAP)} are supported for now, but got '{cfg.tracker_type}'"
-        )
+        raise AssertionError(f"Only {sorted(TRACKER_MAP)} are supported for now, but got '{cfg.tracker_type}'")
 
     predictor._feats = None  # reset ReID pre-hook state
     if hasattr(predictor, "_hook"):
@@ -106,9 +102,7 @@ def on_predict_postprocess_end(predictor: object, persist: bool = False) -> None
     is_stream = predictor.dataset.mode == "stream"
 
     # TrackTrack-only: compute D_del once per frame for all batch elements
-    dets_del_list = (
-        compute_dets_del(predictor) if isinstance(predictor.trackers[0], TRACKTRACK) else None
-    )
+    dets_del_list = compute_dets_del(predictor) if isinstance(predictor.trackers[0], TRACKTRACK) else None
 
     for i, result in enumerate(predictor.results):
         tracker = predictor.trackers[i if is_stream else 0]

@@ -18,18 +18,18 @@ class FastSTrack(STrack):
 
     Extends :class:`STrack` with a bounded ring-buffer of recent Kalman means and per-track occlusion
     bookkeeping. The history buffer enables rolling the Kalman state back to a pre-occlusion frame
-    when a neighbor suddenly covers the target. The buffer is a fixed-size :class:`collections.deque`,
-    so memory stays bounded regardless of track lifetime.
+    when a neighbor suddenly covers the target. The buffer is a fixed-size :class:`collections.deque`, so memory stays
+    bounded regardless of track lifetime.
 
     Attributes:
-        mean_history (collections.deque): Bounded ring-buffer of recent Kalman mean vectors, newest
-            last, capped at ``history_len`` entries.
+        mean_history (collections.deque): Bounded ring-buffer of recent Kalman mean vectors, newest last, capped at
+            ``history_len`` entries.
         not_matched (int): Consecutive frames this track has failed to match a detection.
         is_occluded (bool): True while the track is hidden behind another target.
         occluded_len (int): Consecutive frames the track has been continuously occluded.
         last_occluded_frame (int): Frame id when occlusion was last detected, or -1 if never occluded.
-        was_recently_occluded (bool): Sticky flag kept for ``occ_reappear_window`` frames, used by
-            :class:`FastTracker` to extend the re-find window for tracks that went lost while occluded.
+        was_recently_occluded (bool): Sticky flag kept for ``occ_reappear_window`` frames, used by :class:`FastTracker`
+            to extend the re-find window for tracks that went lost while occluded.
 
     Examples:
         >>> from ultralytics.trackers.utils.kalman_filter import KalmanFilterXYAH
@@ -96,34 +96,30 @@ class FastSTrack(STrack):
 class FASTTracker(BYTETracker):
     """Occlusion-aware ByteTrack-style multi-object tracker.
 
-    Adapted from the reference implementation in the FastTracker paper (arXiv:2508.14370). FastTracker
-    extends :class:`BYTETracker` with lightweight mechanisms that reduce ID switches through crowd
-    occlusions without sacrificing throughput. Unmatched tracks whose area is strongly covered by an
-    active neighbor are flagged as occluded and their Kalman state is rolled back to a pre-occlusion
-    frame, with a one-shot bbox enlargement and dampened motion so they survive the occlusion. An
-    occluded track is kept alive for an extra grace window before being marked lost, and once lost it
-    stays re-findable for an extended window beyond the regular ``track_buffer``. New detections that
-    strongly overlap an already-active track are suppressed at spawn time to prevent ghost IDs.
+    Adapted from the reference implementation in the FastTracker paper (arXiv:2508.14370). FastTracker extends
+    :class:`BYTETracker` with lightweight mechanisms that reduce ID switches through crowd occlusions without
+    sacrificing throughput. Unmatched tracks whose area is strongly covered by an active neighbor are flagged as
+    occluded and their Kalman state is rolled back to a pre-occlusion frame, with a one-shot bbox enlargement and
+    dampened motion so they survive the occlusion. An occluded track is kept alive for an extra grace window before
+    being marked lost, and once lost it stays re-findable for an extended window beyond the regular ``track_buffer``.
+    New detections that strongly overlap an already-active track are suppressed at spawn time to prevent ghost IDs.
 
-    All added work uses vectorized IoU / coverage matrices and only runs on unmatched tracks, so the
-    per-frame overhead over :class:`BYTETracker` stays on the order of a few hundred microseconds.
+    All added work uses vectorized IoU / coverage matrices and only runs on unmatched tracks, so the per-frame overhead
+    over :class:`BYTETracker` stays on the order of a few hundred microseconds.
 
     Attributes:
-        reset_velocity_offset_occ (int): Number of frames to look back when restoring Kalman velocity
-            at occlusion onset.
-        reset_pos_offset_occ (int): Number of frames to look back when restoring Kalman position at
-            occlusion onset.
-        enlarge_bbox_occ (float): One-shot multiplier applied to the bbox height when occlusion is
-            first detected.
+        reset_velocity_offset_occ (int): Number of frames to look back when restoring Kalman velocity at occlusion
+            onset.
+        reset_pos_offset_occ (int): Number of frames to look back when restoring Kalman position at occlusion onset.
+        enlarge_bbox_occ (float): One-shot multiplier applied to the bbox height when occlusion is first detected.
         dampen_motion_occ (float): Multiplier in [0, 1] applied to Kalman velocity during occlusion.
-        active_occ_to_lost_thresh (int): Maximum consecutive occluded frames before a track is marked
-            lost anyway.
-        init_iou_suppress (float): IoU threshold above which a new detection is prevented from
-            spawning a fresh track. Set to 1.0 to disable suppression.
-        occ_cover_thresh (float): Fraction of a track's area that must be covered by another active
-            track to declare occlusion.
-        occ_reappear_window (int): Frames a recently-occluded lost track stays re-findable beyond the
-            regular ``track_buffer``.
+        active_occ_to_lost_thresh (int): Maximum consecutive occluded frames before a track is marked lost anyway.
+        init_iou_suppress (float): IoU threshold above which a new detection is prevented from spawning a fresh track.
+            Set to 1.0 to disable suppression.
+        occ_cover_thresh (float): Fraction of a track's area that must be covered by another active track to declare
+            occlusion.
+        occ_reappear_window (int): Frames a recently-occluded lost track stays re-findable beyond the regular
+            ``track_buffer``.
 
     Methods:
         update: Consume a frame's detections and return the currently-tracked objects.
@@ -150,10 +146,9 @@ class FASTTracker(BYTETracker):
         FastTracker can also be driven by a plain ByteTrack config.
 
         Args:
-            args (Namespace | IterableSimpleNamespace): Parsed tracker config. Must provide the
-                BYTETracker keys (``track_high_thresh``, ``track_low_thresh``, ``new_track_thresh``,
-                ``track_buffer``, ``match_thresh``, ``fuse_score``) and may provide the
-                FastTracker-specific keys described in the class docstring.
+            args (Namespace | IterableSimpleNamespace): Parsed tracker config. Must provide the BYTETracker keys
+                (``track_high_thresh``, ``track_low_thresh``, ``new_track_thresh``, ``track_buffer``, ``match_thresh``,
+                ``fuse_score``) and may provide the FastTracker-specific keys described in the class docstring.
             frame_rate (int): Source video frame rate.
         """
         super().__init__(args, frame_rate=frame_rate)
@@ -174,8 +169,8 @@ class FASTTracker(BYTETracker):
 
         Args:
             results: Object exposing ``xywh`` (or ``xywhr``), ``conf``, and ``cls``.
-            img (np.ndarray | None): Current BGR frame. Unused by FastTracker; accepted for signature
-                parity with other trackers.
+            img (np.ndarray | None): Current BGR frame. Unused by FastTracker; accepted for signature parity with other
+                trackers.
 
         Returns:
             (list[FastSTrack]): One :class:`FastSTrack` per detection, empty if no detections.
@@ -196,16 +191,15 @@ class FASTTracker(BYTETracker):
         grace window for recently-occluded ones.
 
         Args:
-            results: ``Results``-like object exposing ``xywh`` (or ``xywhr``), ``conf``, and ``cls``,
-                and supporting boolean / ndarray indexing.
+            results: ``Results``-like object exposing ``xywh`` (or ``xywhr``), ``conf``, and ``cls``, and supporting
+                boolean / ndarray indexing.
             img (np.ndarray | None): Current frame. Unused by FastTracker.
-            feats (np.ndarray | None): Optional per-detection appearance features. Unused by
-                FastTracker; accepted for signature compatibility.
+            feats (np.ndarray | None): Optional per-detection appearance features. Unused by FastTracker; accepted for
+                signature compatibility.
 
         Returns:
-            (np.ndarray): Float32 array with one row per activated track of the form
-                ``[..., track_id, score, cls, det_idx]``. Leading coordinates are ``xyxy`` for
-                standard boxes or ``xywha`` for oriented boxes.
+            (np.ndarray): Float32 array with one row per activated track of the form ``[..., track_id, score, cls,
+                det_idx]``. Leading coordinates are ``xyxy`` for standard boxes or ``xywha`` for oriented boxes.
         """
         self.frame_id += 1
         activated_stracks: list[FastSTrack] = []
@@ -315,8 +309,8 @@ class FASTTracker(BYTETracker):
         Args:
             r_tracked (list[FastSTrack]): Candidate track pool.
             u_track (list[int] | np.ndarray): Indices into ``r_tracked`` of tracks still unmatched.
-            activated_stracks (list[FastSTrack]): Tracks already matched this frame; used as the
-                pool of potential occluders.
+            activated_stracks (list[FastSTrack]): Tracks already matched this frame; used as the pool of potential
+                occluders.
             lost_stracks (list[FastSTrack]): Output list; tracks transitioned to Lost are appended.
         """
         if len(u_track) == 0:
@@ -333,7 +327,9 @@ class FASTTracker(BYTETracker):
 
         unmatched = [r_tracked[i] for i in u_track]
         unmatched_boxes = (
-            np.asarray([t.xyxy for t in unmatched], dtype=np.float32) if unmatched else np.empty((0, 4), dtype=np.float32)
+            np.asarray([t.xyxy for t in unmatched], dtype=np.float32)
+            if unmatched
+            else np.empty((0, 4), dtype=np.float32)
         )
 
         if active_boxes.size and unmatched_boxes.size:
@@ -386,8 +382,7 @@ class FASTTracker(BYTETracker):
         bookkeeping on any successful match.
 
         Args:
-            matches (Iterable[tuple[int, int]]): ``(track_idx, det_idx)`` pairs from
-                :func:`matching.linear_assignment`.
+            matches (Iterable[tuple[int, int]]): ``(track_idx, det_idx)`` pairs from :func:`matching.linear_assignment`.
             pool (list[FastSTrack]): Track pool indexed by ``track_idx``.
             detections (list[FastSTrack]): Detections indexed by ``det_idx``.
             activated_stracks (list[FastSTrack]): Output list for tracks updated from the Tracked state.

@@ -60,14 +60,14 @@ The default tracker is BoT-SORT.
 
 #### Quick comparison
 
-| Tracker      | Motion model               | Appearance / ReID            | Camera motion compensation | Occlusion handling                            | Best for                                                        |
-| ------------ | -------------------------- | ---------------------------- | -------------------------- | --------------------------------------------- | --------------------------------------------------------------- |
-| ByteTrack    | Linear Kalman              | None                         | No                         | Two-stage low-conf rescue                     | Lightweight baseline; static cameras                            |
-| BoT-SORT     | Linear Kalman              | Optional (`with_reid`)       | Yes (sparseOptFlow / ECC)  | Track buffer + ReID rebinding                 | Default; moving cameras with optional ReID                      |
-| OC-SORT      | Observation-centric Kalman | None                         | No                         | ORU, OCM, OCR re-update from last observation | Non-linear motion (sports, abrupt turns) without ReID overhead  |
-| Deep OC-SORT | Observation-centric Kalman | Yes (default on)             | Yes                        | OC-SORT + adaptive appearance EMA             | Crowded / moving-camera scenes where ID swaps matter            |
-| FastTracker  | Linear Kalman + rollback   | None                         | No                         | Kalman rollback + bbox enlargement on occlusion | Real-time crowd / queue / sports with frequent partial overlap  |
-| TrackTrack   | Linear Kalman (NSA)        | Optional (HMIoU fallback)    | Yes (sparseOptFlow / ECC)  | Iterative multi-cue association + TAI         | Crowded pedestrians where duplicate IDs are a problem           |
+| Tracker      | Motion model               | Appearance / ReID         | Camera motion compensation | Occlusion handling                              | Best for                                                       |
+| ------------ | -------------------------- | ------------------------- | -------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| ByteTrack    | Linear Kalman              | None                      | No                         | Two-stage low-conf rescue                       | Lightweight baseline; static cameras                           |
+| BoT-SORT     | Linear Kalman              | Optional (`with_reid`)    | Yes (sparseOptFlow / ECC)  | Track buffer + ReID rebinding                   | Default; moving cameras with optional ReID                     |
+| OC-SORT      | Observation-centric Kalman | None                      | No                         | ORU, OCM, OCR re-update from last observation   | Non-linear motion (sports, abrupt turns) without ReID overhead |
+| Deep OC-SORT | Observation-centric Kalman | Yes (default on)          | Yes                        | OC-SORT + adaptive appearance EMA               | Crowded / moving-camera scenes where ID swaps matter           |
+| FastTracker  | Linear Kalman + rollback   | None                      | No                         | Kalman rollback + bbox enlargement on occlusion | Real-time crowd / queue / sports with frequent partial overlap |
+| TrackTrack   | Linear Kalman (NSA)        | Optional (HMIoU fallback) | Yes (sparseOptFlow / ECC)  | Iterative multi-cue association + TAI           | Crowded pedestrians where duplicate IDs are a problem          |
 
 ## Tracking
 
@@ -173,33 +173,33 @@ The following table provides a description of each parameter:
 
     If a detection's confidence score falls below [`track_high_thresh`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/bytetrack.yaml#L5), the tracker will not update that object, resulting in no active tracks.
 
-| **Parameter**       | **Valid Values or Ranges**                    | **Description**                                                                                                                                        |
-| ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tracker_type`      | `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, `tracktrack` | Specifies the tracker type. One of `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, or `tracktrack`.                                       |
-| `track_high_thresh` | `0.0-1.0`                                     | Threshold used for the first association during tracking. Affects how confidently a detection is matched to an existing track.                         |
-| `track_low_thresh`  | `0.0-1.0`                                     | Threshold for the second association during tracking. Used when the first association fails, with more lenient criteria.                               |
-| `new_track_thresh`  | `0.0-1.0`                                     | Threshold to initialize a new track if the detection does not match any existing tracks. Controls when a new object is considered to appear.           |
-| `track_buffer`      | `>=0`                                         | Buffer used to indicate the number of frames lost tracks should be kept alive before getting removed. Higher value means more tolerance for occlusion. |
-| `match_thresh`      | `0.0-1.0`                                     | Threshold for matching tracks. Higher values make the matching more lenient.                                                                           |
-| `fuse_score`        | `True`, `False`                               | Determines whether to fuse confidence scores with IoU distances before matching. Helps balance spatial and confidence information when associating.    |
-| `gmc_method`        | `orb`, `sift`, `ecc`, `sparseOptFlow`, `None` | Method used for global motion compensation. Helps account for camera movement to improve tracking.                                                     |
-| `proximity_thresh`  | `0.0-1.0`                                     | Minimum IoU required for a valid match with ReID (Re-identification). Ensures spatial closeness before using appearance cues.                          |
-| `appearance_thresh` | `0.0-1.0`                                     | Minimum appearance similarity required for ReID. Sets how visually similar two detections must be to be linked.                                        |
-| `with_reid`         | `True`, `False`                               | Indicates whether to use ReID. Enables appearance-based matching for better tracking across occlusions. Supported by BoT-SORT, Deep OC-SORT, and TrackTrack. |
-| `model`             | `auto`, `yolo26[nsmlx]-cls.pt`                | Specifies the model to use. Defaults to `auto`, which uses native features if the detector is YOLO, otherwise uses `yolo26n-cls.pt`.                   |
+| **Parameter**       | **Valid Values or Ranges**                                                | **Description**                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tracker_type`      | `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, `tracktrack` | Specifies the tracker type. One of `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, or `tracktrack`.                                             |
+| `track_high_thresh` | `0.0-1.0`                                                                 | Threshold used for the first association during tracking. Affects how confidently a detection is matched to an existing track.                               |
+| `track_low_thresh`  | `0.0-1.0`                                                                 | Threshold for the second association during tracking. Used when the first association fails, with more lenient criteria.                                     |
+| `new_track_thresh`  | `0.0-1.0`                                                                 | Threshold to initialize a new track if the detection does not match any existing tracks. Controls when a new object is considered to appear.                 |
+| `track_buffer`      | `>=0`                                                                     | Buffer used to indicate the number of frames lost tracks should be kept alive before getting removed. Higher value means more tolerance for occlusion.       |
+| `match_thresh`      | `0.0-1.0`                                                                 | Threshold for matching tracks. Higher values make the matching more lenient.                                                                                 |
+| `fuse_score`        | `True`, `False`                                                           | Determines whether to fuse confidence scores with IoU distances before matching. Helps balance spatial and confidence information when associating.          |
+| `gmc_method`        | `orb`, `sift`, `ecc`, `sparseOptFlow`, `None`                             | Method used for global motion compensation. Helps account for camera movement to improve tracking.                                                           |
+| `proximity_thresh`  | `0.0-1.0`                                                                 | Minimum IoU required for a valid match with ReID (Re-identification). Ensures spatial closeness before using appearance cues.                                |
+| `appearance_thresh` | `0.0-1.0`                                                                 | Minimum appearance similarity required for ReID. Sets how visually similar two detections must be to be linked.                                              |
+| `with_reid`         | `True`, `False`                                                           | Indicates whether to use ReID. Enables appearance-based matching for better tracking across occlusions. Supported by BoT-SORT, Deep OC-SORT, and TrackTrack. |
+| `model`             | `auto`, `yolo26[nsmlx]-cls.pt`                                            | Specifies the model to use. Defaults to `auto`, which uses native features if the detector is YOLO, otherwise uses `yolo26n-cls.pt`.                         |
 
 #### Tracker-specific arguments
 
 Each algorithm exposes additional knobs on top of the shared parameters above. See the per-tracker sections below for the full description and tuning advice:
 
-| Tracker      | Config file       | Specific arguments                                                                                                                                                                                                         | Section                                                          |
-| ------------ | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| BoT-SORT     | `botsort.yaml`    | `gmc_method`, `proximity_thresh`, `appearance_thresh`, `with_reid`, `model`                                                                                                                                                | Uses the shared ReID + GMC arguments above.                      |
-| ByteTrack    | `bytetrack.yaml`  | None — uses only the shared arguments.                                                                                                                                                                                     | —                                                                |
-| OC-SORT      | `ocsort.yaml`     | `delta_t`, `inertia`, `use_byte`                                                                                                                                                                                           | [OC-SORT-specific arguments](#oc-sort-specific-arguments)         |
-| Deep OC-SORT | `deepocsort.yaml` | OC-SORT args + `with_reid`, `model`, `proximity_thresh`, `appearance_thresh`, `alpha_fixed_emb`, `gmc_method`                                                                                                              | [Deep OC-SORT-specific arguments](#deep-oc-sort-specific-arguments) |
-| FastTracker  | `fasttrack.yaml`  | `reset_velocity_offset_occ`, `reset_pos_offset_occ`, `enlarge_bbox_occ`, `dampen_motion_occ`, `active_occ_to_lost_thresh`, `occ_cover_thresh`, `occ_reappear_window`, `init_iou_suppress`                                  | [FastTracker-specific arguments](#fasttracker-specific-arguments) |
-| TrackTrack   | `tracktrack.yaml` | `iou_weight`, `reid_weight`, `conf_weight`, `angle_weight`, `det_thr`, `penalty_p`, `penalty_q`, `reduce_step`, `tai_thr`, `init_thr`, `min_track_len`, `gmc_method`, `gmc_downscale`, `gmc_max_corners`, `gmc_skip_frames` | [TrackTrack-specific arguments](#tracktrack-specific-arguments)   |
+| Tracker      | Config file       | Specific arguments                                                                                                                                                                                                          | Section                                                             |
+| ------------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| BoT-SORT     | `botsort.yaml`    | `gmc_method`, `proximity_thresh`, `appearance_thresh`, `with_reid`, `model`                                                                                                                                                 | Uses the shared ReID + GMC arguments above.                         |
+| ByteTrack    | `bytetrack.yaml`  | None — uses only the shared arguments.                                                                                                                                                                                      | —                                                                   |
+| OC-SORT      | `ocsort.yaml`     | `delta_t`, `inertia`, `use_byte`                                                                                                                                                                                            | [OC-SORT-specific arguments](#oc-sort-specific-arguments)           |
+| Deep OC-SORT | `deepocsort.yaml` | OC-SORT args + `with_reid`, `model`, `proximity_thresh`, `appearance_thresh`, `alpha_fixed_emb`, `gmc_method`                                                                                                               | [Deep OC-SORT-specific arguments](#deep-oc-sort-specific-arguments) |
+| FastTracker  | `fasttrack.yaml`  | `reset_velocity_offset_occ`, `reset_pos_offset_occ`, `enlarge_bbox_occ`, `dampen_motion_occ`, `active_occ_to_lost_thresh`, `occ_cover_thresh`, `occ_reappear_window`, `init_iou_suppress`                                   | [FastTracker-specific arguments](#fasttracker-specific-arguments)   |
+| TrackTrack   | `tracktrack.yaml` | `iou_weight`, `reid_weight`, `conf_weight`, `angle_weight`, `det_thr`, `penalty_p`, `penalty_q`, `reduce_step`, `tai_thr`, `init_thr`, `min_track_len`, `gmc_method`, `gmc_downscale`, `gmc_max_corners`, `gmc_skip_frames` | [TrackTrack-specific arguments](#tracktrack-specific-arguments)     |
 
 ### Enabling Re-Identification (ReID)
 
@@ -251,23 +251,23 @@ TrackTrack also uses NSA-Kalman updates (measurement-noise scaled by detection c
 
 In addition to the shared arguments (`track_high_thresh`, `track_low_thresh`, `new_track_thresh`, `track_buffer`, `match_thresh`, `gmc_method`, `with_reid`, `model`), TrackTrack exposes the following parameters in [`tracktrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/tracktrack.yaml):
 
-| **Parameter**      | **Valid Values or Ranges** | **Description**                                                                                                              |
-| ------------------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `lost_match_thr`   | `0.0-1.0`                  | Looser gate used to rebind lost tracks. Set `>` `match_thresh` to enable a second pass; set equal to disable it.             |
-| `iou_weight`       | `0.0-1.0`                  | Weight of the HMIoU distance term in the multi-cue cost matrix.                                                              |
-| `reid_weight`      | `0.0-1.0`                  | Weight of the cosine ReID distance. If ReID is disabled, HMIoU is used as a fallback so this weight still applies.           |
-| `conf_weight`      | `0.0-1.0`                  | Weight of the confidence-projection distance (tracks extrapolate their score and are compared to detection confidence).      |
-| `angle_weight`     | `0.0-1.0`                  | Weight of the corner-angle distance between each track's per-corner velocity and the track-to-detection direction.           |
-| `det_thr`          | `0.0-1.0`                  | Detection threshold that separates high- from low-confidence detections for the penalty logic.                               |
-| `penalty_p`        | `0.0-1.0`                  | Cost penalty added to low-confidence detections (`D_low`) during association.                                                |
-| `penalty_q`        | `0.0-1.0`                  | Cost penalty added to detections recovered by the looser secondary NMS (`D_del`).                                            |
-| `reduce_step`      | `0.0-1.0`                  | Amount by which the match threshold is relaxed at each iteration of the iterative assignment.                                |
-| `tai_thr`          | `0.0-1.0`                  | IoU threshold used by Track-Aware Initialization NMS to suppress duplicate-looking spawn candidates.                         |
-| `init_thr`         | `0.0-1.0`                  | Minimum detection score required to initialize a new track from TAI.                                                         |
-| `min_track_len`    | `>=0`                      | Minimum number of successful updates before a newly spawned track is confirmed (promoted to `Tracked`).                      |
-| `gmc_downscale`    | `>=1`                      | Downscale factor for the GMC input image. Higher values are faster but less accurate.                                        |
-| `gmc_max_corners`  | `>=1`                      | Max keypoints for `sparseOptFlow`. 200 is typically enough for an affine warp.                                               |
-| `gmc_skip_frames`  | `>=0`                      | Skip `N` frames between GMC updates and reuse the cached warp. `0` = recompute every frame.                                  |
+| **Parameter**     | **Valid Values or Ranges** | **Description**                                                                                                         |
+| ----------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `lost_match_thr`  | `0.0-1.0`                  | Looser gate used to rebind lost tracks. Set `>` `match_thresh` to enable a second pass; set equal to disable it.        |
+| `iou_weight`      | `0.0-1.0`                  | Weight of the HMIoU distance term in the multi-cue cost matrix.                                                         |
+| `reid_weight`     | `0.0-1.0`                  | Weight of the cosine ReID distance. If ReID is disabled, HMIoU is used as a fallback so this weight still applies.      |
+| `conf_weight`     | `0.0-1.0`                  | Weight of the confidence-projection distance (tracks extrapolate their score and are compared to detection confidence). |
+| `angle_weight`    | `0.0-1.0`                  | Weight of the corner-angle distance between each track's per-corner velocity and the track-to-detection direction.      |
+| `det_thr`         | `0.0-1.0`                  | Detection threshold that separates high- from low-confidence detections for the penalty logic.                          |
+| `penalty_p`       | `0.0-1.0`                  | Cost penalty added to low-confidence detections (`D_low`) during association.                                           |
+| `penalty_q`       | `0.0-1.0`                  | Cost penalty added to detections recovered by the looser secondary NMS (`D_del`).                                       |
+| `reduce_step`     | `0.0-1.0`                  | Amount by which the match threshold is relaxed at each iteration of the iterative assignment.                           |
+| `tai_thr`         | `0.0-1.0`                  | IoU threshold used by Track-Aware Initialization NMS to suppress duplicate-looking spawn candidates.                    |
+| `init_thr`        | `0.0-1.0`                  | Minimum detection score required to initialize a new track from TAI.                                                    |
+| `min_track_len`   | `>=0`                      | Minimum number of successful updates before a newly spawned track is confirmed (promoted to `Tracked`).                 |
+| `gmc_downscale`   | `>=1`                      | Downscale factor for the GMC input image. Higher values are faster but less accurate.                                   |
+| `gmc_max_corners` | `>=1`                      | Max keypoints for `sparseOptFlow`. 200 is typically enough for an affine warp.                                          |
+| `gmc_skip_frames` | `>=0`                      | Skip `N` frames between GMC updates and reuse the cached warp. `0` = recompute every frame.                             |
 
 #### Example: running TrackTrack
 
@@ -377,11 +377,11 @@ ReID is optional in TrackTrack when it's disabled, the `reid_weight` falls back 
 
 In addition to the shared arguments (`track_high_thresh`, `track_low_thresh`, `new_track_thresh`, `track_buffer`, `match_thresh`, `fuse_score`), OC-SORT exposes the following parameters in [`ocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/ocsort.yaml):
 
-| **Parameter** | **Valid Values or Ranges** | **Description**                                                                                                                |
-| ------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `delta_t`     | `>=1`                      | Temporal window (in frames) used to compute the observation-based velocity direction for OCM. Larger values smooth more.       |
-| `inertia`     | `0.0-1.0`                  | Weight of the velocity-consistency cost added to the association matrix. Higher values penalize sudden direction changes.      |
-| `use_byte`    | `True`, `False`            | Enable a ByteTrack-style second association pass over low-confidence detections (`track_low_thresh`). Improves recall.         |
+| **Parameter** | **Valid Values or Ranges** | **Description**                                                                                                           |
+| ------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `delta_t`     | `>=1`                      | Temporal window (in frames) used to compute the observation-based velocity direction for OCM. Larger values smooth more.  |
+| `inertia`     | `0.0-1.0`                  | Weight of the velocity-consistency cost added to the association matrix. Higher values penalize sudden direction changes. |
+| `use_byte`    | `True`, `False`            | Enable a ByteTrack-style second association pass over low-confidence detections (`track_low_thresh`). Improves recall.    |
 
 #### Example: running OC-SORT
 
@@ -430,14 +430,14 @@ In addition to the shared arguments (`track_high_thresh`, `track_low_thresh`, `n
 
 In addition to all [OC-SORT arguments](#oc-sort-specific-arguments) and the shared tracking arguments, Deep OC-SORT adds the following in [`deepocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/deepocsort.yaml):
 
-| **Parameter**       | **Valid Values or Ranges**                    | **Description**                                                                                                                  |
-| ------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `with_reid`         | `True`, `False`                               | Enable appearance-based matching. Defaults to `True` for Deep OC-SORT.                                                           |
-| `model`             | `auto`, `yolo26[nsmlx]-reid.pt`, custom path  | ReID model. `auto` reuses native YOLO features when available; otherwise falls back to a classification model.                   |
-| `proximity_thresh`  | `0.0-1.0`                                     | Minimum IoU before appearance features are considered in the cost. Prevents far-away embeddings from polluting matches.          |
-| `appearance_thresh` | `0.0-1.0`                                     | Minimum cosine similarity required for a ReID match. Raise to reduce identity swaps in look-alike scenes.                        |
+| **Parameter**       | **Valid Values or Ranges**                    | **Description**                                                                                                                                       |
+| ------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `with_reid`         | `True`, `False`                               | Enable appearance-based matching. Defaults to `True` for Deep OC-SORT.                                                                                |
+| `model`             | `auto`, `yolo26[nsmlx]-reid.pt`, custom path  | ReID model. `auto` reuses native YOLO features when available; otherwise falls back to a classification model.                                        |
+| `proximity_thresh`  | `0.0-1.0`                                     | Minimum IoU before appearance features are considered in the cost. Prevents far-away embeddings from polluting matches.                               |
+| `appearance_thresh` | `0.0-1.0`                                     | Minimum cosine similarity required for a ReID match. Raise to reduce identity swaps in look-alike scenes.                                             |
 | `alpha_fixed_emb`   | `0.0-1.0`                                     | Base EMA factor for track-embedding updates. Higher values preserve the older embedding longer; the actual rate is modulated by detection confidence. |
-| `gmc_method`        | `sparseOptFlow`, `orb`, `sift`, `ecc`, `none` | Global motion compensation method. Use `sparseOptFlow` for moving cameras; `none` for static cameras.                            |
+| `gmc_method`        | `sparseOptFlow`, `orb`, `sift`, `ecc`, `none` | Global motion compensation method. Use `sparseOptFlow` for moving cameras; `none` for static cameras.                                                 |
 
 #### Example: running Deep OC-SORT
 
@@ -490,16 +490,16 @@ In addition to all [OC-SORT arguments](#oc-sort-specific-arguments) and the shar
 
 In addition to the shared arguments (`track_high_thresh`, `track_low_thresh`, `new_track_thresh`, `track_buffer`, `match_thresh`, `fuse_score`), FastTracker exposes the following parameters in [`fasttrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/fasttrack.yaml):
 
-| **Parameter**                | **Valid Values or Ranges** | **Description**                                                                                                              |
-| ---------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `reset_velocity_offset_occ`  | `>=0`                      | Number of history frames back to restore the Kalman velocity from on occlusion onset.                                        |
-| `reset_pos_offset_occ`       | `>=0`                      | Number of history frames back to restore the Kalman position from on occlusion onset.                                        |
-| `enlarge_bbox_occ`           | `>=1.0`                    | One-shot scaling applied to the predicted bbox while occluded so the search region widens.                                   |
-| `dampen_motion_occ`          | `0.0-1.0`                  | Multiplicative factor applied to velocity while occluded. Lower values make the track "slow down" through the occlusion.     |
-| `active_occ_to_lost_thresh`  | `>=1`                      | Maximum consecutive occluded frames before an active track is moved to the lost pool.                                        |
-| `occ_cover_thresh`           | `0.0-1.0`                  | Fraction of a track's area that must be covered by another active track to declare occlusion.                                |
-| `occ_reappear_window`        | `>=0`                      | Frames a recently-occluded lost track stays preferentially re-findable. Independent of `track_buffer`.                       |
-| `init_iou_suppress`          | `0.0-1.0`                  | Suppress new-track initialization if its IoU with any active track exceeds this. Set to `1.0` to disable suppression.        |
+| **Parameter**               | **Valid Values or Ranges** | **Description**                                                                                                          |
+| --------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `reset_velocity_offset_occ` | `>=0`                      | Number of history frames back to restore the Kalman velocity from on occlusion onset.                                    |
+| `reset_pos_offset_occ`      | `>=0`                      | Number of history frames back to restore the Kalman position from on occlusion onset.                                    |
+| `enlarge_bbox_occ`          | `>=1.0`                    | One-shot scaling applied to the predicted bbox while occluded so the search region widens.                               |
+| `dampen_motion_occ`         | `0.0-1.0`                  | Multiplicative factor applied to velocity while occluded. Lower values make the track "slow down" through the occlusion. |
+| `active_occ_to_lost_thresh` | `>=1`                      | Maximum consecutive occluded frames before an active track is moved to the lost pool.                                    |
+| `occ_cover_thresh`          | `0.0-1.0`                  | Fraction of a track's area that must be covered by another active track to declare occlusion.                            |
+| `occ_reappear_window`       | `>=0`                      | Frames a recently-occluded lost track stays preferentially re-findable. Independent of `track_buffer`.                   |
+| `init_iou_suppress`         | `0.0-1.0`                  | Suppress new-track initialization if its IoU with any active track exceeds this. Set to `1.0` to disable suppression.    |
 
 #### Example: running FastTracker
 

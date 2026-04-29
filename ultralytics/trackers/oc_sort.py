@@ -15,8 +15,8 @@ from .utils.stracks import merge_track_pools
 class OCSortTrack(STrack):
     """Track object for OC-SORT with observation-centric state management.
 
-    Extends STrack with storage of real detector observations and velocity computation,
-    enabling the three OC-SORT components: ORU, OCM, and OCR.
+    Extends STrack with storage of real detector observations and velocity computation, enabling the three OC-SORT
+    components: ORU, OCM, and OCR.
 
     Attributes:
         last_observation (np.ndarray): Last real detection in xyxy format.
@@ -105,8 +105,8 @@ class OCSortTrack(STrack):
         """Compute the observation-centric velocity direction from stored observations.
 
         Returns:
-            (np.ndarray | None): Normalized `(dx, dy)` direction vector, or None if there are
-                fewer than two usable observations.
+            (np.ndarray | None): Normalized `(dx, dy)` direction vector, or None if there are fewer than two usable
+                observations.
         """
         if len(self.observations) < 2:
             return None
@@ -164,12 +164,14 @@ class OCSortTrack(STrack):
             alpha = t / gap
             virtual_xyxy = (1 - alpha) * last_obs + alpha * new_observation_xyxy
             # Convert xyxy to tlwh then to xyah for Kalman measurement
-            virtual_tlwh = np.array([
-                virtual_xyxy[0],
-                virtual_xyxy[1],
-                virtual_xyxy[2] - virtual_xyxy[0],
-                virtual_xyxy[3] - virtual_xyxy[1],
-            ])
+            virtual_tlwh = np.array(
+                [
+                    virtual_xyxy[0],
+                    virtual_xyxy[1],
+                    virtual_xyxy[2] - virtual_xyxy[0],
+                    virtual_xyxy[3] - virtual_xyxy[1],
+                ]
+            )
             virtual_xyah = self.tlwh_to_xyah(virtual_tlwh)
             self.mean, self.covariance = self.kalman_filter.predict(self.mean, self.covariance)
             self.mean, self.covariance = self.kalman_filter.update(self.mean, self.covariance, virtual_xyah)
@@ -196,8 +198,8 @@ class OCSORT(BYTETracker):
         """Initialize OC-SORT tracker.
 
         Args:
-            args (Namespace | IterableSimpleNamespace): Parsed tracker config providing the BYTE
-                keys plus `delta_t`, `inertia`, and `use_byte`.
+            args (Namespace | IterableSimpleNamespace): Parsed tracker config providing the BYTE keys plus `delta_t`,
+                `inertia`, and `use_byte`.
             frame_rate (int): Source video frame rate.
         """
         super().__init__(args, frame_rate)
@@ -241,16 +243,15 @@ class OCSORT(BYTETracker):
         Kalman state repaired by :meth:`OCSortTrack.apply_oru` before re-activation.
 
         Args:
-            results: `Results`-like object exposing `xywh` (or `xywhr`), `conf`, and `cls`,
-                and supporting boolean / ndarray indexing.
+            results: `Results`-like object exposing `xywh` (or `xywhr`), `conf`, and `cls`, and supporting boolean /
+                ndarray indexing.
             img (np.ndarray | None): Current frame. Unused by OC-SORT.
-            feats (np.ndarray | None): Optional per-detection appearance features. Unused by
-                OC-SORT; accepted for signature compatibility.
+            feats (np.ndarray | None): Optional per-detection appearance features. Unused by OC-SORT; accepted for
+                signature compatibility.
 
         Returns:
-            (np.ndarray): Float32 array with one row per activated track of the form
-                `[..., track_id, score, cls, det_idx]`. Leading coordinates are `xyxy` for
-                standard boxes or `xywha` for oriented boxes.
+            (np.ndarray): Float32 array with one row per activated track of the form `[..., track_id, score, cls,
+                det_idx]`. Leading coordinates are `xyxy` for standard boxes or `xywha` for oriented boxes.
         """
         self.frame_id += 1
         activated_stracks = []
@@ -324,7 +325,11 @@ class OCSORT(BYTETracker):
             # Update unmatched sets after OCR
             ocr_u_track_set = {id(ocr_tracked[i]) for i in ocr_u_track}
             ocr_u_det_set = {id(ocr_dets[i]) for i in ocr_u_det}
-            u_track = [i for i in u_track if id(strack_pool[i]) in ocr_u_track_set or strack_pool[i].state != TrackState.Tracked]
+            u_track = [
+                i
+                for i in u_track
+                if id(strack_pool[i]) in ocr_u_track_set or strack_pool[i].state != TrackState.Tracked
+            ]
             u_detection = [i for i in u_detection if id(detections[i]) in ocr_u_det_set]
 
         # Stage 2: Low-confidence second pass (optional, ByteTrack-style)
