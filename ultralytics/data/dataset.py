@@ -48,6 +48,7 @@ from .utils import (
     get_hash,
     img2label_paths,
     load_dataset_cache_file,
+    polygons2masks_overlap,
     save_dataset_cache_file,
     verify_image,
     verify_image_label,
@@ -1211,6 +1212,227 @@ class SemsegDataset(BaseDataset):
         # Add empty cls tensor for compatibility with BaseTrainer progress logging
         new_batch["cls"] = torch.zeros(len(batch))
         return new_batch
+
+
+def add_polygon_background(data: dict) -> dict:
+    """Append a 'background' class for the polygon-based semseg path (yaml without 'masks_dir').
+
+    When the dataset provides instance polygon labels and no PNG masks, an extra background lass id is
+    reserved for pixels not covered by any polygon.
+    """
+    if data.get("masks_dir") or data.get("_polygon_bg_added"):
+        return data
+    nc = int(data.get("nc") or len(data.get("names") or {}))
+    names = dict(data.get("names") or {})
+    names[nc] = "background"
+    data["names"] = names
+    data["nc"] = nc + 1
+    data["_polygon_bg_added"] = True
+    return data
+
+
+class PolygonSemsegDataset(SemsegDataset):
+    """Semantic segmentation dataset that rasterizes YOLO polygon labels into masks on the fly.
+
+    Used when the dataset YAML lacks 'masks_dir'. Pixels not covered by any polygon become a
+    dedicated background class. Requires `add_polygon_background(data)` to be called first, which
+    bumps `data['nc']` to user_nc + 1; the background id is then `data['nc'] - 1`.
+    """
+
+    def __init__(self, *args, data=None, **kwargs):
+        """Initialize PolygonSemsegDataset.
+
+        Args:
+            data (dict): Dataset configuration. `data['nc']` must already include the background
+                class; the last class id (`nc - 1`) is reserved for background.
+            *args: Positional arguments forwarded to `SemsegDataset` / `BaseDataset`.
+            **kwargs: Keyword arguments forwarded to `SemsegDataset` / `BaseDataset`.
+        """
+        nc = (data or {}).get("nc") or len((data or {}).get("names", {}))
+        self.bg_class_idx = max(int(nc) - 1, 0)
+        super().__init__(*args, data=data, **kwargs)
+
+    def cache_labels(self, path: Path = Path("./labels.cache")) -> dict[str, Any]:
+        """Cache YOLO polygon labels for semseg-from-polygons training.
+
+        Args:
+            path (Path): Cache file path.
+
+        Returns:
+            (dict[str, Any]): Cached labels and metadata.
+        """
+        x = {"labels": []}
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []
+        desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+        total = len(self.im_files)
+        # User class ids occupy [0, bg_class_idx); reject polygons that claim the reserved bg id.
+        num_cls = max(self.bg_class_idx, 1)
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(
+                func=verify_image_label,
+                iterable=zip(
+                    self.im_files,
+                    self.label_files,
+                    repeat(self.prefix),
+                    repeat(False),  # keypoint
+                    repeat(num_cls),
+                    repeat(0),  # nkpt
+                    repeat(0),  # ndim
+                    repeat(self.single_cls),
+                ),
+            )
+            pbar = TQDM(results, desc=desc, total=total)
+            for im_file, lb, shape, segments, _kpt, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+                nm += nm_f
+                nf += nf_f
+                ne += ne_f
+                nc += nc_f
+                if im_file:
+                    x["labels"].append(
+                        {
+                            "im_file": im_file,
+                            "shape": shape,
+                            "cls": lb[:, 0:1],
+                            "segments": segments,
+                        }
+                    )
+                if msg:
+                    msgs.append(msg)
+                pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            pbar.close()
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        if nf == 0:
+            LOGGER.warning(f"{self.prefix}No polygon labels found in {path}. {HELP_URL}")
+        x["hash"] = get_hash(self.label_files + self.im_files)
+        x["results"] = nf, nm, ne, nc, total
+        x["msgs"] = msgs
+        if x["labels"]:
+            save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return x
+
+    def get_labels(self) -> list[dict[str, Any]]:
+        """Load polygon labels (from cache or by scanning) and synthesize per-image mask cache paths."""
+        self.label_files = img2label_paths(self.im_files)
+        cache_path = Path(self.label_files[0]).parent.with_suffix(".semseg.cache")
+        try:
+            cache, exists = load_dataset_cache_file(cache_path), True
+            assert cache["version"] == DATASET_CACHE_VERSION
+            assert cache["hash"] == get_hash(self.label_files + self.im_files)
+        except (FileNotFoundError, AssertionError, AttributeError, ModuleNotFoundError):
+            cache, exists = self.cache_labels(cache_path), False
+
+        nf, nm, ne, nc, n = cache.pop("results")
+        if exists and LOCAL_RANK in {-1, 0}:
+            d = f"Scanning {cache_path}... {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            TQDM(None, desc=self.prefix + d, total=n, initial=n)
+            if cache["msgs"]:
+                LOGGER.info("\n".join(cache["msgs"]))
+
+        [cache.pop(k) for k in ("hash", "version", "msgs")]
+        labels = cache["labels"]
+        if not labels:
+            raise RuntimeError(f"No valid images found in {cache_path}. {HELP_URL}")
+        self.im_files = [lb["im_file"] for lb in labels]
+        # No source mask files; rasterized masks are cached as <image>.mask.npy alongside images.
+        self.mask_files = [""] * len(labels)
+        self.mask_npy_files = [Path(f).with_suffix(".mask.npy") for f in self.im_files]
+        self.mask_ims = [None] * len(labels)
+        return labels
+
+    def load_mask(self, index: int, image_shape: tuple[int, int] | None = None) -> np.ndarray:
+        """Rasterize this image's polygons into a (H, W) uint8 semantic mask, bg = self.bg_class_idx."""
+        h, w = image_shape if image_shape is not None else self._fallback_mask_shape(index)
+        label = self.labels[index]
+        cls = label.get("cls")
+        segments = label.get("segments") or []
+        if cls is None or len(cls) == 0 or len(segments) == 0:
+            return np.full((h, w), self.bg_class_idx, dtype=np.uint8)
+
+        # Denormalize polygons (stored as normalized xy) to pixel coordinates at (h, w).
+        scale = np.array([w, h], dtype=np.float32)
+        polys = [np.asarray(s, dtype=np.float32).reshape(-1, 2) * scale for s in segments]
+        # Returns (H, W) instance index map: 0 = no polygon, 1..N = sorted instance index.
+        inst, sorted_idx = polygons2masks_overlap((h, w), polys, downsample_ratio=1)
+        cls_arr = np.asarray(cls).reshape(-1).astype(np.int64)[sorted_idx]
+        out = np.full((h, w), self.bg_class_idx, dtype=np.uint8)
+        fg = inst > 0
+        out[fg] = cls_arr[inst[fg] - 1].astype(np.uint8)
+        return out
+
+    def _fallback_mask_shape(self, index: int, image_shape: tuple[int, int] | None = None) -> tuple[int, int]:
+        """Resolve mask shape when image_shape is unavailable; never reads PNG masks."""
+        if image_shape is not None:
+            return image_shape
+        if self.im_hw[index] is not None:
+            return self.im_hw[index]
+        if self.im_hw0[index] is not None:
+            return self.im_hw0[index]
+        if "shape" in self.labels[index]:
+            return self.labels[index]["shape"]
+        im = cv2.imread(self.im_files[index], self.cv2_flag)
+        return im.shape[:2] if im is not None else (self.imgsz, self.imgsz)
+
+    def set_rectangle(self):
+        """Aspect-ratio batching; rebuild mask_npy_files from reordered im_files (no source masks)."""
+        # Skip SemsegDataset.set_rectangle (it reads "mask_file" from each label, which we don't store).
+        BaseDataset.set_rectangle(self)
+        self.mask_files = [""] * len(self.im_files)
+        self.mask_npy_files = [Path(f).with_suffix(".mask.npy") for f in self.im_files]
+
+    def check_cache_disk(self, safety_margin: float = 0.5) -> bool:
+        """Estimate disk space for image + rasterized-mask caching (mask byte cost ≈ H*W)."""
+        import shutil
+
+        b, gb = 0, 1 << 30
+        n = min(self.ni, 30)
+        for _ in range(n):
+            i = random.randint(0, self.ni - 1)
+            im = imread(self.im_files[i], flags=self.cv2_flag)
+            if im is None:
+                continue
+            b += im.nbytes
+            h, w = self._fallback_mask_shape(i)
+            b += h * w
+            if not os.access(Path(self.im_files[i]).parent, os.W_OK):
+                self.cache = None
+                LOGGER.warning(f"{self.prefix}Skipping caching to disk, directory not writable")
+                return False
+        disk_required = b * self.ni / n * (1 + safety_margin)
+        total, _used, free = shutil.disk_usage(Path(self.im_files[0]).parent)
+        if disk_required > free:
+            self.cache = None
+            LOGGER.warning(
+                f"{self.prefix}{disk_required / gb:.1f}GB disk space required for image+mask caching, "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{free / gb:.1f}/{total / gb:.1f}GB free, not caching"
+            )
+            return False
+        return True
+
+    def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
+        """Estimate RAM for image + rasterized-mask caching."""
+        b, gb = 0, 1 << 30
+        n = min(self.ni, 30)
+        for _ in range(n):
+            i = random.randint(0, self.ni - 1)
+            im = imread(self.im_files[i], flags=self.cv2_flag)
+            if im is None:
+                continue
+            b += im.nbytes
+            h, w = self._fallback_mask_shape(i)
+            b += h * w
+        mem_required = b * self.ni / n * (1 + safety_margin)
+        mem = __import__("psutil").virtual_memory()
+        if mem_required > mem.available:
+            self.cache = None
+            LOGGER.warning(
+                f"{self.prefix}{mem_required / gb:.1f}GB RAM required to cache images+masks "
+                f"with {int(safety_margin * 100)}% safety margin but only "
+                f"{mem.available / gb:.1f}/{mem.total / gb:.1f}GB available, not caching"
+            )
+            return False
+        return True
 
 
 class SemanticFormat:

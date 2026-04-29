@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from ultralytics.data.build import build_dataloader
-from ultralytics.data.dataset import SemsegDataset
+from ultralytics.data.dataset import PolygonSemsegDataset, SemsegDataset, add_polygon_background
 from ultralytics.engine.validator import BaseValidator
 from ultralytics.utils import LOGGER, RANK
 from ultralytics.utils.metrics import SemsegMetrics
@@ -185,6 +185,10 @@ class SemanticSegmentationValidator(BaseValidator):
     def build_dataset(self, img_path, mode="val", batch=None):
         """Build semantic segmentation dataset.
 
+        Routes to `PolygonSemsegDataset` when the dataset YAML lacks 'masks_dir' and to
+        `SemsegDataset` otherwise. The helper call is idempotent: in trainer-driven validation
+        the data dict has already been bumped with the background class.
+
         Args:
             img_path (str): Path to images.
             mode (str): Dataset mode.
@@ -193,8 +197,10 @@ class SemanticSegmentationValidator(BaseValidator):
         Returns:
             (SemsegDataset): Dataset object.
         """
+        self.data = add_polygon_background(self.data)
         use_rect = mode == "val"
-        return SemsegDataset(
+        dataset_cls = SemsegDataset if self.data.get("masks_dir") else PolygonSemsegDataset
+        return dataset_cls(
             img_path=img_path,
             imgsz=self.args.imgsz,
             augment=False,

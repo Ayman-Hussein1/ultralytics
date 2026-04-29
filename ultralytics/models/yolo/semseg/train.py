@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from ultralytics.data import build_dataloader
-from ultralytics.data.dataset import SemsegDataset
+from ultralytics.data.dataset import PolygonSemsegDataset, SemsegDataset, add_polygon_background
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
 from ultralytics.nn.tasks import SemanticSegmentationModel, load_checkpoint
@@ -45,8 +45,15 @@ class SemanticSegmentationTrainer(BaseTrainer):
         overrides["task"] = "semseg"
         super().__init__(cfg, overrides, _callbacks)
 
+    def get_dataset(self):
+        """Parse the dataset YAML and bump nc/names with a background class for the polygon path."""
+        return add_polygon_background(super().get_dataset())
+
     def build_dataset(self, img_path, mode="train", batch=None):
         """Build semantic segmentation dataset.
+
+        Routes to `PolygonSemsegDataset` when the dataset YAML lacks 'masks_dir' (polygon labels
+        rasterized on the fly) and to `SemsegDataset` otherwise (PNG mask labels).
 
         Args:
             img_path (str): Path to the folder containing images.
@@ -57,7 +64,8 @@ class SemanticSegmentationTrainer(BaseTrainer):
             (SemsegDataset): Semantic segmentation dataset.
         """
         use_rect = mode == "val"
-        return SemsegDataset(
+        dataset_cls = SemsegDataset if self.data.get("masks_dir") else PolygonSemsegDataset
+        return dataset_cls(
             img_path=img_path,
             imgsz=self.args.imgsz,
             augment=mode == "train",
