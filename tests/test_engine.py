@@ -163,13 +163,17 @@ def test_nan_recovery():
     assert nan_injected[0], "NaN injection failed"
 
 
-@pytest.mark.parametrize("pretrained", [True, False, MODEL])
-def test_train_reuses_loaded_checkpoint_config(monkeypatch, pretrained):
-    """Test training reuses an already-loaded checkpoint config without forcing pretrained weights."""
+@pytest.mark.parametrize(
+    "kwargs,uses_weights",
+    [({}, True), ({"pretrained": True}, True), ({"pretrained": False}, False), ({"pretrained": MODEL}, True)],
+)
+def test_train_reuses_loaded_checkpoint_model(monkeypatch, kwargs, uses_weights):
+    """Test training reuses loaded checkpoint config while respecting the pretrained argument."""
     model = YOLO("yolo26n.yaml")
     model.ckpt = {"checkpoint": True}
     model.ckpt_path = "/tmp/fake.pt"
     model.overrides["model"] = "ul://glenn-jocher/m2/exp-14"
+    model.overrides["pretrained"] = False
     original_model = model.model
     captured = {}
 
@@ -198,15 +202,15 @@ def test_train_reuses_loaded_checkpoint_config(monkeypatch, pretrained):
         lambda path: (original_model, {"checkpoint": True}),
     )
 
-    model.train(data="coco8.yaml", epochs=1, pretrained=pretrained)
+    model.train(data="coco8.yaml", epochs=1, **kwargs)
 
     assert captured["trainer"].model is original_model, "Trainer model does not match original"
     assert captured["cfg"] == original_model.yaml, f"Config mismatch: {captured['cfg']} != {original_model.yaml}"
-    assert captured["weights"] is (None if pretrained is False else original_model), "Unexpected weights loaded"
+    assert captured["weights"] is (original_model if uses_weights else None), "Unexpected weights loaded"
 
 
-@pytest.mark.parametrize("pretrained", [False, MODEL])
-def test_setup_model_respects_pretrained_arg_for_pt_models(monkeypatch, pretrained):
+@pytest.mark.parametrize("pretrained,uses_weights", [(True, True), (False, False), (MODEL, True)])
+def test_setup_model_respects_pretrained_arg_for_pt_models(monkeypatch, pretrained, uses_weights):
     """Test .pt models use checkpoint config while respecting the pretrained argument."""
     captured = {}
     checkpoint_model = SimpleNamespace(yaml={"nc": 80})
@@ -228,4 +232,4 @@ def test_setup_model_respects_pretrained_arg_for_pt_models(monkeypatch, pretrain
     trainer.setup_model()
 
     assert captured["cfg"] == checkpoint_model.yaml, "Checkpoint config was not used"
-    assert captured["weights"] is (None if pretrained is False else checkpoint_model), "Unexpected weights loaded"
+    assert captured["weights"] is (checkpoint_model if uses_weights else None), "Unexpected weights loaded"
