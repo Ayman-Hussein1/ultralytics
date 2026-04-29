@@ -25,8 +25,8 @@ class ReID:
         """Initialize encoder for re-identification.
 
         Args:
-            model (str): Path to a ReID model. `.pt` runs through the YOLO predictor (embed-layer
-                extraction); other extensions go through `AutoBackend`.
+            model (str): Path to a ReID model. `.pt` runs through the YOLO predictor (embed-layer extraction); other
+                extensions go through `AutoBackend`.
             imgsz (int): Square input size used for crop preprocessing on the AutoBackend path.
             device (str | torch.device | None): Inference device; defaults to CUDA if available.
             fp16 (bool): Use half precision when the backend supports it.
