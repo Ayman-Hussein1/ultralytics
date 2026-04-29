@@ -45,7 +45,8 @@ class SemanticSegmentationPredictor(BasePredictor):
 
         # Static-shape backend (e.g. OpenVINO/TensorRT exported with dynamic=False):
         # model input is fixed to (imgsz, imgsz); fall back to square letterbox.
-        if getattr(self.model, "dynamic", True) is False:
+        is_dynamic = self.model.format == "pt" or getattr(self.model, "dynamic", False)
+        if not is_dynamic:
             letterbox = LetterBox(new_shape=(imgsz, imgsz), auto=False, scaleup=False, stride=stride)
             return [letterbox(image=x) for x in im]
 
