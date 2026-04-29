@@ -6,16 +6,13 @@ from collections import deque
 from typing import Any
 
 import numpy as np
-import torch
-
-from ultralytics.utils.ops import xywh2xyxy
-from ultralytics.utils.plotting import save_one_box
 
 from .basetrack import TrackState
 from .byte_tracker import BYTETracker, STrack
 from .utils import matching
 from .utils.gmc import GMC
 from .utils.kalman_filter import KalmanFilterXYWH
+from .utils.reid import ReID
 
 
 class BOTrack(STrack):
@@ -233,25 +230,3 @@ class BOTSORT(BYTETracker):
         self.gmc.reset_params()
 
 
-class ReID:
-    """YOLO model as encoder for re-identification."""
-
-    def __init__(self, model: str):
-        """Initialize encoder for re-identification.
-
-        Args:
-            model (str): Path to the YOLO model for re-identification.
-        """
-        from ultralytics import YOLO
-
-        self.model = YOLO(model)
-        self.model(embed=[len(self.model.model.model) - 2 if ".pt" in model else -1], verbose=False, save=False)  # init
-
-    def __call__(self, img: np.ndarray, dets: np.ndarray) -> list[np.ndarray]:
-        """Extract embeddings for detected objects."""
-        feats = self.model.predictor(
-            [save_one_box(det, img, save=False) for det in xywh2xyxy(torch.from_numpy(dets[:, :4]))]
-        )
-        if len(feats) != dets.shape[0] and feats[0].shape[0] == dets.shape[0]:
-            feats = feats[0]  # batched prediction with non-PyTorch backend
-        return [f.cpu().numpy() for f in feats]
