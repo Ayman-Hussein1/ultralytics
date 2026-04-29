@@ -53,9 +53,6 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
     predictor._feats = None  # reset ReID pre-hook state
     if hasattr(predictor, "_hook"):
         predictor._hook.remove()
-
-    # "auto" ReID reads backbone features via a forward pre-hook on the Detect layer. If the model
-    # doesn't expose the right head (end2end, non-standard), fall back to an external cls model.
     if cfg.tracker_type in {"botsort", "tracktrack", "deepocsort"} and cfg.with_reid and cfg.model == "auto":
         from ultralytics.nn.modules.head import Detect
 
