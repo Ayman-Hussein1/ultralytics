@@ -191,8 +191,8 @@ class FASTTracker(BYTETracker):
         grace window for recently-occluded ones.
 
         Args:
-            results (Any): ``Results``-like object exposing ``xywh`` (or ``xywhr``), ``conf``, and ``cls``, and supporting
-                boolean / ndarray indexing.
+            results (Any): ``Results``-like object exposing ``xywh`` (or ``xywhr``), ``conf``, and ``cls``, and
+                supporting boolean / ndarray indexing.
             img (np.ndarray | None): Current frame. Unused by FastTracker.
             feats (np.ndarray | None): Optional per-detection appearance features. Unused by FastTracker; accepted for
                 signature compatibility.

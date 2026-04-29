@@ -28,8 +28,8 @@ def merge_track_pools(
     to `removed_buffer` entries.
 
     Args:
-        tracker (Any): Object exposing `tracked_stracks`, `lost_stracks`, `removed_stracks` lists, plus the `joint_stracks` /
-            `sub_stracks` / `remove_duplicate_stracks` helpers.
+        tracker (Any): Object exposing `tracked_stracks`, `lost_stracks`, `removed_stracks` lists, plus the
+            `joint_stracks` / `sub_stracks` / `remove_duplicate_stracks` helpers.
         activated (list): Tracks updated from the Tracked state this frame.
         refind (list): Tracks re-activated from the Lost state this frame.
         lost (list): Tracks transitioned to Lost this frame.
