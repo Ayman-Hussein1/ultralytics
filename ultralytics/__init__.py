@@ -17,7 +17,7 @@ from ultralytics.utils.downloads import download
 settings = SETTINGS
 
 MODELS = ("YOLO", "YOLOWorld", "YOLOE", "NAS", "SAM", "FastSAM", "RTDETR")
-
+######################
 __all__ = (
     "__version__",
     "ASSETS",
