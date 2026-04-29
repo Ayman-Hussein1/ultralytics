@@ -6,12 +6,12 @@ from typing import Any
 
 import numpy as np
 from .basetrack import TrackState
-from .bot_sort import ReID
 from .byte_tracker import STrack
 from .oc_sort import OCSORT, OCSortTrack
 from .utils import matching
 from .utils.gmc import GMC
 from .utils.kalman_filter import KalmanFilterXYAH
+from .utils.reid import ReID
 from .utils.stracks import merge_track_pools
 
 

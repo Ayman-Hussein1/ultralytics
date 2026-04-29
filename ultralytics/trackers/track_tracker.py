@@ -506,7 +506,7 @@ class TRACKTRACK:
             if model == "auto":
                 self.encoder = lambda feats, _: [f.cpu().numpy() for f in feats]
             else:
-                from .bot_sort import ReID
+                from .utils.reid import ReID
 
                 self.encoder = ReID(model)
 
