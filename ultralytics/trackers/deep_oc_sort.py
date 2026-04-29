@@ -63,8 +63,10 @@ class DeepOCSortTrack(OCSortTrack):
     def update_features(self, feat: np.ndarray, score: float | None = None) -> None:
         """Blend a new appearance feature into `smooth_feat` with confidence-adaptive EMA.
 
-        When `score` exceeds `det_thresh`, the EMA factor is `alpha_fixed_emb` boosted by the
-        normalized trust margin; below the threshold the new feature replaces the old one.
+        When `score` exceeds `det_thresh`, the EMA factor `alpha = alpha_fixed_emb + (1 - alpha_fixed_emb) * (1 - trust)`
+        with `trust = (score - det_thresh) / (1 - det_thresh)`, so a high-confidence detection blends in more strongly.
+        At or below `det_thresh`, `alpha = 1.0` so the existing `smooth_feat` is kept and the new (low-trust) feature is
+        ignored — same behavior used by the reference Deep OC-SORT implementation.
 
         Args:
             feat (np.ndarray): New (un-normalized) appearance feature vector.
@@ -229,10 +231,13 @@ class DeepOCSORT(OCSORT):
         ]
 
     def get_dists(self, tracks: list[DeepOCSortTrack], detections: list[DeepOCSortTrack]) -> np.ndarray:
-        """Compute the cost matrix using `min(IoU, appearance)` fusion plus OCM velocity cost.
+        """Compute the cost matrix combining IoU, OCM velocity, and (optionally) appearance.
 
-        Follows BoT-SORT's appearance-fusion pattern: IoU distance is gated by `proximity_thresh`,
-        appearance distance is gated by `appearance_thresh`, and the per-pair minimum is taken.
+        Note on paper fidelity: Deep OC-SORT §3.3 prescribes an *additive* per-pair weighted
+        appearance term (cost = IoU + w(conf) · emb_cost). This implementation uses BoT-SORT's
+        `min(IoU, appearance)` fusion instead. We A/B-tested both on three videos with no
+        ground truth and saw essentially identical ID-stability proxies, so the simpler `min`
+        form is kept here.
         """
         iou_dists = matching.iou_distance(tracks, detections)
         dists_mask = iou_dists > (1 - self.proximity_thresh)
@@ -246,7 +251,7 @@ class DeepOCSORT(OCSORT):
         vel_dists = self._velocity_direction_cost(tracks, detections)
         dists = dists + self.inertia * vel_dists
 
-        # Appearance: min fusion with strict gating
+        # Appearance: min fusion with strict gating (deviates from paper §3.3; see method docstring)
         if self.with_reid and self.encoder is not None:
             emb_dists = matching.embedding_distance(tracks, detections) / 2.0
             emb_dists[emb_dists > (1 - self.appearance_thresh)] = 1.0
@@ -332,7 +337,7 @@ class DeepOCSORT(OCSORT):
             if self.args.fuse_score:
                 ocr_dists = matching.fuse_score(ocr_dists, ocr_dets)
 
-            # Enhance OCR with appearance (if ReID available)
+            # Enhance OCR with appearance (if ReID available); same min-fusion as Stage 1
             if self.with_reid and self.encoder is not None:
                 ocr_emb_dists = matching.embedding_distance(ocr_tracked, ocr_dets) / 2.0
                 ocr_emb_dists[ocr_emb_dists > (1 - self.appearance_thresh)] = 1.0
