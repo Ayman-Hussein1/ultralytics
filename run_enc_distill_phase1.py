@@ -82,6 +82,16 @@ RECIPES = {
 # to the global batch so wd_eff stays at the recipe value.
 NBS_CANONICAL = 512
 
+DATA_7SRC_DEFAULT = ','.join([
+    '/data/shared-datasets/imagenet',
+    '/data/shared-datasets/coco',
+    '/data/shared-datasets/yoloe26_data/Objects365v1/images/train',
+    '/data/shared-datasets/yoloe26_data/mixed_grounding/gqa/paired/train',
+    '/data/shared-datasets/yoloe26_data/flickr/paired/train',
+    '/data/shared-datasets/DOTAv1-split/paired/train',
+    '/data/shared-datasets/SODA-A-split/images/train',
+])
+
 
 def _pop_flag(argv: list[str], flag: str, is_bool: bool = False) -> tuple[list[str], str]:
     """Pop a --flag [value] pair from argv, return (remaining_argv, value).
@@ -146,7 +156,7 @@ def main(argv: list[str]) -> None:
     )
     recipe = args[3] if len(args) > 3 else "default"
     model_yaml = args[4] if len(args) > 4 else "yolo26s-cls.yaml"
-    data = args[5] if len(args) > 5 else resume_args.get("data", "/data/shared-datasets/datacomp-12m")
+    data = args[5] if len(args) > 5 else resume_args.get("data", DATA_7SRC_DEFAULT)
     epochs = int(args[6]) if len(args) > 6 else resume_args.get("epochs")
     r = RECIPES[recipe]
 
@@ -156,7 +166,7 @@ def main(argv: list[str]) -> None:
         for key, now, default in (
             ("distill_path", distill_path, "adaptor"),
             ("adaptor_arch", adaptor_arch, "mlp"),
-            ("data", data, "/data/shared-datasets/datacomp-12m"),
+            ("data", data, DATA_7SRC_DEFAULT),
         ):
             prev = resume_args.get(key, default)
             if now != prev:
@@ -218,7 +228,7 @@ def main(argv: list[str]) -> None:
         epochs=epochs or r["epochs"],
         batch=global_batch,
         imgsz=224,
-        patience=200,
+        patience=20,
         nbs=nbs,
         cos_lr=True,
         lr0=lr0,

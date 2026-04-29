@@ -92,7 +92,7 @@ def main(argv: list[str]) -> None:
     phase1_weights = (
         argv[1]
         if len(argv) > 1
-        else resume_args.get("pretrained", "runs/classify/yolo-next-encoder/phase1-d7-dinov3-convnextb/weights/last.pt")
+        else resume_args.get("pretrained", "runs/classify/yolo-next-encoder/phase1-d7-dinov3-convnextb/weights/best.pt")
     )
     mode = argv[2] if len(argv) > 2 else ("inet_linear_probe" if resume_args.get("freeze") else "inet_finetune")
     name = argv[3] if len(argv) > 3 else resume_args.get("name", f"phase2-{mode}-d7")
