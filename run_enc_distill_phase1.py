@@ -218,7 +218,7 @@ def main(argv: list[str]) -> None:
         epochs=epochs or r["epochs"],
         batch=global_batch,
         imgsz=224,
-        patience=5,
+        patience=200,
         nbs=nbs,
         cos_lr=True,
         lr0=lr0,
